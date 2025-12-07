@@ -1553,6 +1553,15 @@ export class PlacementSystem {
 
       // Create an empty group as placeholder (instanced mesh handles actual rendering)
       mesh = new THREE.Group();
+
+      // Force immediate rebuild based on current render mode
+      if (this.currentRenderMode === "instanced") {
+        this.rebuildInstancedMeshesNow();
+      } else {
+        // greedy-full or greedy-simple
+        this.rebuildGreedyMeshes();
+        this.greedyMeshDirty = false;
+      }
     } else {
       // Non-instanced: create individual mesh
       mesh = this.createStructureMesh(this.currentStructure, false);

@@ -672,9 +672,11 @@ export class PlacementSystem {
     toMode: RenderMode,
     config: QualityConfig
   ): void {
-    // Cancel any pending rebuilds
+    // Cancel any pending rebuilds and reset scheduled flags
     this.greedyMeshDirty = false;
     this.instancesDirty = false;
+    this.greedyRebuildScheduled = false;
+    this.rebuildScheduled = false;
 
     // ALWAYS clear BOTH groups to prevent any overlap
     this.instancedMeshGroup.visible = false;

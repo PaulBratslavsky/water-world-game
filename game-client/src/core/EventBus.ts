@@ -88,7 +88,7 @@ export interface GameEvents {
   "state:prefabCaptureChanged": { active: boolean }; // Legacy alias for selectionModeChanged
   "state:renderModeChanged": { renderMode: "solid" | "wireframe" };
   "state:showMaterialsChanged": { show: boolean };
-  "state:connectionModeChanged": { connectionMode: "single-player" | "online" | "explorer"; previous: "single-player" | "online" | "explorer" };
+  "state:connectionModeChanged": { connectionMode: "single-player" | "online" | "explorer" | "dev"; previous: "single-player" | "online" | "explorer" | "dev" };
 
   // Selection events (replaces prefab capture events)
   "selection:complete": {
@@ -113,7 +113,7 @@ export interface GameEvents {
   // Input events
   "input:click": { worldX: number; worldY: number; worldZ: number; gridX: number; gridY: number; gridZ: number };
   "input:rightClick": { worldX: number; worldY: number; worldZ: number; gridX: number; gridY: number; gridZ: number };
-  "input:keyDown": { key: string };
+  "input:keyDown": { key: string; shiftKey?: boolean; ctrlKey?: boolean };
   "input:keyUp": { key: string };
 
   // Character events
@@ -130,6 +130,19 @@ export interface GameEvents {
   "structure:rotated": void;
   "structure:placementCancelled": void;
   "structure:levelChanged": { level: number; maxLevel: number };
+
+  // Block editor events
+  "block:materialChanged": {
+    blockId: string;
+    material: {
+      metalness?: number;
+      roughness?: number;
+      emissive?: string;
+      emissiveIntensity?: number;
+      opacity?: number;
+      transparent?: boolean;
+    };
+  };
 
   // Prefab events
   "prefab:selected": { prefabId: string };

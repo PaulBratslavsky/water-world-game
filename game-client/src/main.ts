@@ -44,6 +44,7 @@ import {
   SavedBlock,
   getWorldId,
   loadFromStrapi,
+  saveToStrapi,
   saveExplorerGame,
   clearExplorerSave,
 } from "./core/SaveSystem";
@@ -252,11 +253,12 @@ class Game {
         this.handlePaste();
       }
 
-      // Handle level changes in build mode (even when not placing anything)
+      // Handle level changes in build mode
+      // Space = level up, Shift = level down (only in build mode)
       if (stateManager.getMode() === "build") {
-        if (key === "]" || key === "pageup") {
+        if (key === " ") {
           this.cycleBuildLevel(1);
-        } else if (key === "[" || key === "pagedown") {
+        } else if (key === "shift") {
           this.cycleBuildLevel(-1);
         }
       }
@@ -1389,8 +1391,8 @@ class Game {
     // Generate initial chunks around starting position
     this.chunkManager.updateForPosition(8, 8);
 
-    // Setup enhanced lighting for better visuals
-    this.lights = createEnhancedLighting(this.scene);
+    // Setup enhanced lighting for better visuals (pass renderer for environment map)
+    this.lights = createEnhancedLighting(this.scene, this.renderer);
 
     // Initialize water system - water world at level 0.5 (half block high)
     // Green Matrix-style water
@@ -1594,14 +1596,31 @@ class Game {
    * Initialize networking for multiplayer
    */
   private initializeNetworking(): void {
-    // Use WebSocket server URL (default to localhost:3001)
-    const serverUrl = "ws://localhost:3001";
+    // Use WebSocket server URL from environment (empty = no game server)
+    const serverUrl = import.meta.env.VITE_SOCKET_URL || "";
     const worldId = getWorldId();
+    const isDevMode = import.meta.env.VITE_DEV_MODE === "true";
 
     // If no world ID, skip server connection and use single player mode
     if (!worldId) {
       console.log("No world ID, entering single player mode");
       stateManager.setConnectionMode("single-player");
+      this.loadSavedGame();
+      return;
+    }
+
+    // If dev mode enabled, skip game server and save directly to Strapi
+    if (isDevMode) {
+      console.log("Dev mode enabled, entering builder mode (saves directly to Strapi)");
+      stateManager.setConnectionMode("dev");
+      this.loadSavedGame();
+      return;
+    }
+
+    // If no game server URL configured, go straight to explorer mode
+    if (!serverUrl) {
+      console.log("No game server URL configured, entering explorer mode");
+      stateManager.setConnectionMode("explorer");
       this.loadSavedGame();
       return;
     }
@@ -1880,6 +1899,19 @@ class Game {
       console.log("Requesting server to save...");
       this.uiManager?.showMessage("Saving to cloud...", 1000);
       this.networkManager.sendWorldSave();
+      return;
+    }
+
+    if (connectionMode === "dev") {
+      // Dev mode: save directly to Strapi (no game server needed)
+      console.log("Dev mode, saving directly to Strapi");
+      this.uiManager?.showMessage("Saving to Strapi...", 1000);
+      const success = await saveToStrapi(blocks);
+      if (success) {
+        this.uiManager?.showMessage(`Saved ${blocks.length} blocks to Strapi`, 2000);
+      } else {
+        this.uiManager?.showMessage("Failed to save to Strapi", 2000);
+      }
       return;
     }
 

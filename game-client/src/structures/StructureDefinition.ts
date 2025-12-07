@@ -95,6 +95,13 @@ export function getStructure(id: string): StructureDefinition | undefined {
   return block ? blockToStructure(block) : undefined;
 }
 
+// Update a structure's material properties (for real-time editing)
+export function updateStructureMaterial(id: string, material: BlockMaterial): void {
+  if (STRUCTURES[id]) {
+    STRUCTURES[id].material = { ...STRUCTURES[id].material, ...material };
+  }
+}
+
 // Calculate bounding box of a structure
 export function getStructureBounds(structure: StructureDefinition): { width: number; depth: number } {
   let maxX = 0;

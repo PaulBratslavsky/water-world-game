@@ -389,7 +389,8 @@ function getStrapiHeaders(): HeadersInit {
 export async function loadBlocksFromStrapi(
   apiUrl?: string
 ): Promise<BlockData[]> {
-  const url = apiUrl || `${STRAPI_URL}/api/blocks`;
+  // Request 100 items per page to get all blocks (Strapi defaults to 25)
+  const url = apiUrl || `${STRAPI_URL}/api/blocks?pagination[pageSize]=100`;
 
   try {
     console.log(`Loading blocks from: ${url}`);
@@ -463,4 +464,82 @@ export function getCategories(): string[] {
     blockData.filter((block) => block.isActive).map((block) => block.category)
   );
   return Array.from(categories);
+}
+
+// Find block by blockId in Strapi (returns documentId for updates)
+async function findBlockDocumentId(blockId: string): Promise<string | null> {
+  const url = `${STRAPI_URL}/api/blocks?filters[blockId][$eq]=${encodeURIComponent(blockId)}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: getStrapiHeaders(),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const json = await response.json();
+    if (json.data && json.data.length > 0) {
+      return json.data[0].documentId;
+    }
+    return null;
+  } catch (error) {
+    console.error("Failed to find block:", error);
+    return null;
+  }
+}
+
+// Update a block's material properties in Strapi
+export async function updateBlockInStrapi(
+  blockId: string,
+  material: BlockMaterial
+): Promise<boolean> {
+  try {
+    // First find the documentId for this block
+    const documentId = await findBlockDocumentId(blockId);
+    if (!documentId) {
+      console.error(`Block not found in Strapi: ${blockId}`);
+      return false;
+    }
+
+    const url = `${STRAPI_URL}/api/blocks/${documentId}`;
+    const payload = {
+      data: {
+        material,
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: getStrapiHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error("Strapi error response:", response.status, errorBody);
+      return false;
+    }
+
+    // Update local cache
+    const blockIndex = blockData.findIndex((b) => b.blockId === blockId);
+    if (blockIndex >= 0) {
+      blockData[blockIndex].material = material;
+    }
+
+    console.log(`Updated block "${blockId}" material in Strapi`);
+    return true;
+  } catch (error) {
+    console.error("Failed to update block in Strapi:", error);
+    return false;
+  }
+}
+
+// Update block in local cache (for real-time preview)
+export function updateBlockLocally(blockId: string, material: BlockMaterial): void {
+  const blockIndex = blockData.findIndex((b) => b.blockId === blockId);
+  if (blockIndex >= 0) {
+    blockData[blockIndex].material = { ...blockData[blockIndex].material, ...material };
+  }
 }

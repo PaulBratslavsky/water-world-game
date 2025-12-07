@@ -36,6 +36,9 @@
         <span class="hint">P - Select blocks</span>
       </div>
       <div class="control-row">
+        <span class="hint">Right-click block - Edit material</span>
+      </div>
+      <div class="control-row">
         <span class="hint">V - Paste (after copy)</span>
       </div>
       <div class="control-row">
@@ -81,8 +84,8 @@
       <button id="capture-prefab-btn" class="option-btn" title="Select Blocks (P) - Select blocks to cut, copy, delete, or save as prefab">Select (P)</button>
       <button id="wireframe-btn" class="option-btn" title="Toggle Wireframe Mode - Show blocks as wireframes">Wireframe</button>
       <button id="materials-btn" class="option-btn active" title="Toggle Materials - Show/hide material properties">Materials</button>
-      <span id="build-level-display" class="build-level" title="Build Level ([ and ] to change)">Level: 0</span>
-      <span class="build-level-hint">[ ] to change level</span>
+      <span id="build-level-display" class="build-level" title="Build Level (Space/Shift+Space to change)">Level: 0</span>
+      <span class="build-level-hint">Space/Shift adjusts level</span>
     </div>
 
     <div id="structure-menu"></div>
@@ -173,6 +176,71 @@
         <div class="modal-actions">
           <button id="prefab-cancel-btn" class="modal-btn cancel">Cancel</button>
           <button id="prefab-save-btn" class="modal-btn save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Block Editor Modal -->
+    <div id="block-editor-modal" class="modal-overlay">
+      <div class="modal-content block-editor">
+        <h3 class="modal-title">Edit Block: <span id="block-editor-name">Block</span></h3>
+        <div class="modal-body">
+          <!-- Block Preview -->
+          <div class="block-preview-container">
+            <div id="block-editor-preview" class="block-preview"></div>
+          </div>
+
+          <!-- Material Properties -->
+          <div class="slider-group">
+            <label>Metalness</label>
+            <div class="slider-row">
+              <input type="range" id="block-metalness" min="0" max="1" step="0.05" value="0" />
+              <span id="block-metalness-value" class="slider-value">0.00</span>
+            </div>
+          </div>
+
+          <div class="slider-group">
+            <label>Roughness</label>
+            <div class="slider-row">
+              <input type="range" id="block-roughness" min="0" max="1" step="0.05" value="0.7" />
+              <span id="block-roughness-value" class="slider-value">0.70</span>
+            </div>
+          </div>
+
+          <div class="slider-group">
+            <label>Emissive Intensity</label>
+            <div class="slider-row">
+              <input type="range" id="block-emissive-intensity" min="0" max="5" step="0.1" value="0" />
+              <span id="block-emissive-intensity-value" class="slider-value">0.0</span>
+            </div>
+          </div>
+
+          <div class="slider-group">
+            <label>Emissive Color</label>
+            <div class="slider-row">
+              <input type="color" id="block-emissive-color" value="#000000" />
+              <span id="block-emissive-color-value" class="slider-value">#000000</span>
+            </div>
+          </div>
+
+          <div class="slider-group">
+            <label>Opacity</label>
+            <div class="slider-row">
+              <input type="range" id="block-opacity" min="0" max="1" step="0.05" value="1" />
+              <span id="block-opacity-value" class="slider-value">1.00</span>
+            </div>
+          </div>
+
+          <div class="slider-group checkbox-group">
+            <label>
+              <input type="checkbox" id="block-transparent" />
+              Transparent
+            </label>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="block-editor-cancel-btn" class="modal-btn cancel">Close</button>
+          <button id="block-editor-apply-btn" class="modal-btn save">Apply</button>
         </div>
       </div>
     </div>

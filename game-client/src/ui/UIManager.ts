@@ -1,8 +1,9 @@
 import { onEvent, emitEvent } from "../core/EventBus";
 import { stateManager, GameMode, ViewMode, ConnectionMode } from "../core/StateManager";
-import { getAllStructures, StructureDefinition } from "../structures/StructureDefinition";
+import { getAllStructures, StructureDefinition, BlockMaterial, updateStructureMaterial } from "../structures/StructureDefinition";
 import { getAllPrefabs, PrefabDefinition, refreshPrefabs } from "../structures/PrefabDefinition";
 import { savePrefabToStrapi, savePrefabLocally, generatePrefabId, PrefabCategory, PrefabBlockData } from "../structures/PrefabData";
+import { getBlock, updateBlockLocally, DEFAULT_MATERIAL } from "../structures/BlockData";
 import { DebugPanel } from "./DebugPanel";
 import { setWorldId, validateWorldId, getWorldId, clearWorldId, WorldInfo } from "../core/SaveSystem";
 
@@ -21,6 +22,7 @@ export class UIManager {
   private prefabModal: HTMLElement | null;
   private joinWorldModal: HTMLElement | null;
   private selectionActionMenu: HTMLElement | null;
+  private blockEditorModal: HTMLElement | null;
 
   // Prefab capture state
   private pendingPrefabBlocks: PrefabBlockData[] = [];
@@ -32,6 +34,13 @@ export class UIManager {
   private onSelectionCopy: (() => void) | null = null;
   private onSelectionDelete: (() => void) | null = null;
 
+  // Prevent button spam - track if action is processing
+  private isActionProcessing: boolean = false;
+
+  // Block editor state
+  private currentEditingBlockId: string | null = null;
+  private currentEditingMaterial: BlockMaterial = {};
+
   constructor() {
     this.modeToggleContainer = document.getElementById("mode-toggle");
     this.structureMenuContainer = document.getElementById("structure-menu");
@@ -40,6 +49,7 @@ export class UIManager {
     this.prefabModal = document.getElementById("prefab-modal");
     this.joinWorldModal = document.getElementById("join-world-modal");
     this.selectionActionMenu = document.getElementById("selection-action-menu");
+    this.blockEditorModal = document.getElementById("block-editor-modal");
 
     this.setupUI();
     this.setupEventListeners();
@@ -73,6 +83,7 @@ export class UIManager {
     this.setupSelectionActionMenu();
     this.setupPrefabModal();
     this.setupJoinWorldModal();
+    this.setupBlockEditorModal();
     this.checkExistingWorldConnection();
   }
 
@@ -150,34 +161,52 @@ export class UIManager {
     const cancelBtn = document.getElementById("selection-cancel-btn");
 
     cutBtn?.addEventListener("click", () => {
+      if (this.isActionProcessing) return;
+      this.isActionProcessing = true;
       this.hideSelectionActionMenu();
       this.onSelectionCut?.();
+      // Reset after a short delay to allow action to complete
+      setTimeout(() => { this.isActionProcessing = false; }, 300);
     });
 
     copyBtn?.addEventListener("click", () => {
+      if (this.isActionProcessing) return;
+      this.isActionProcessing = true;
       this.hideSelectionActionMenu();
       this.onSelectionCopy?.();
+      setTimeout(() => { this.isActionProcessing = false; }, 300);
     });
 
     deleteBtn?.addEventListener("click", () => {
+      if (this.isActionProcessing) return;
+      this.isActionProcessing = true;
       this.hideSelectionActionMenu();
       this.onSelectionDelete?.();
+      setTimeout(() => { this.isActionProcessing = false; }, 300);
     });
 
     prefabBtn?.addEventListener("click", () => {
+      if (this.isActionProcessing) return;
+      this.isActionProcessing = true;
       this.hideSelectionActionMenu();
       this.showPrefabModal(this.pendingBlockCount);
+      setTimeout(() => { this.isActionProcessing = false; }, 300);
     });
 
     cancelBtn?.addEventListener("click", () => {
+      if (this.isActionProcessing) return;
+      this.isActionProcessing = true;
       this.hideSelectionActionMenu();
       emitEvent("selection:cancelled", undefined);
+      setTimeout(() => { this.isActionProcessing = false; }, 300);
     });
   }
 
   private showSelectionActionMenu(blockCount: number): void {
     if (!this.selectionActionMenu) return;
 
+    // Reset processing flag when showing menu for new selection
+    this.isActionProcessing = false;
     this.pendingBlockCount = blockCount;
     const blockCountSpan = document.getElementById("selection-block-count");
     if (blockCountSpan) {
@@ -467,6 +496,14 @@ export class UIManager {
     grid.className = "menu-grid";
     this.structureMenuContainer.appendChild(grid);
 
+    // Enable horizontal scrolling with mouse wheel
+    grid.addEventListener("wheel", (e) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        grid.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+
     const structures = getAllStructures();
 
     structures.forEach((structure) => {
@@ -495,6 +532,14 @@ export class UIManager {
     const grid = document.createElement("div");
     grid.className = "menu-grid";
     this.structureMenuContainer.appendChild(grid);
+
+    // Enable horizontal scrolling with mouse wheel
+    grid.addEventListener("wheel", (e) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        grid.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
 
     // Re-add blocks
     const structures = getAllStructures();
@@ -548,6 +593,12 @@ export class UIManager {
 
     button.addEventListener("click", () => {
       stateManager.selectStructure(structure.id);
+    });
+
+    // Right-click to edit block material properties
+    button.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.openBlockEditor(structure.id);
     });
 
     return button;
@@ -623,9 +674,9 @@ export class UIManager {
         saveBtn.disabled = false;
         saveBtn.title = "Save temporarily (will be lost when leaving)";
         saveBtn.textContent = "⏳ Save";
-      } else if (connectionMode === "online") {
+      } else if (connectionMode === "online" || connectionMode === "dev") {
         saveBtn.disabled = false;
-        saveBtn.title = "Save to cloud";
+        saveBtn.title = connectionMode === "dev" ? "Save to Strapi (dev mode)" : "Save to cloud";
         saveBtn.textContent = "☁️ Save";
       } else {
         saveBtn.disabled = false;
@@ -640,13 +691,23 @@ export class UIManager {
 
     if (statusEl) {
       // Clear all status classes
-      statusEl.classList.remove("connected", "error", "offline", "explorer", "online");
+      statusEl.classList.remove("connected", "error", "offline", "explorer", "online", "dev");
 
       if (connectionMode === "single-player") {
         statusEl.classList.add("offline");
         statusEl.innerHTML = `🎮 Single Player`;
         statusEl.style.display = "flex";
         if (joinBtn) joinBtn.style.display = "block";
+      } else if (connectionMode === "dev") {
+        // Dev/Builder mode - can save directly to Strapi
+        const worldInfo = await validateWorldId();
+        const worldName = worldInfo?.name || "World";
+        statusEl.classList.add("dev");
+        statusEl.innerHTML = `🔧 Builder: ${worldName} <button id="leave-world-btn" class="leave-btn">Leave</button>`;
+        statusEl.style.display = "flex";
+        if (joinBtn) joinBtn.style.display = "none";
+        // Wire up leave button
+        document.getElementById("leave-world-btn")?.addEventListener("click", () => this.leaveWorld());
       } else if (connectionMode === "explorer") {
         statusEl.classList.add("explorer");
         statusEl.innerHTML = `👁️ Explorer <button id="leave-world-btn" class="leave-btn">Leave</button>`;
@@ -782,5 +843,188 @@ export class UIManager {
     setTimeout(() => {
       messageEl.remove();
     }, duration);
+  }
+
+  // ==================== Block Editor ====================
+
+  private setupBlockEditorModal(): void {
+    const cancelBtn = document.getElementById("block-editor-cancel-btn");
+    const applyBtn = document.getElementById("block-editor-apply-btn");
+
+    cancelBtn?.addEventListener("click", () => {
+      this.hideBlockEditor();
+    });
+
+    applyBtn?.addEventListener("click", () => {
+      this.applyBlockMaterial();
+    });
+
+    // Setup slider input handlers
+    this.setupSlider("block-metalness", (value) => {
+      this.currentEditingMaterial.metalness = value;
+      this.updateBlockPreview();
+    });
+
+    this.setupSlider("block-roughness", (value) => {
+      this.currentEditingMaterial.roughness = value;
+      this.updateBlockPreview();
+    });
+
+    this.setupSlider("block-emissive-intensity", (value) => {
+      this.currentEditingMaterial.emissiveIntensity = value;
+      this.updateBlockPreview();
+    });
+
+    this.setupSlider("block-opacity", (value) => {
+      this.currentEditingMaterial.opacity = value;
+      this.updateBlockPreview();
+    });
+
+    // Color picker
+    const emissiveColorInput = document.getElementById("block-emissive-color") as HTMLInputElement;
+    const emissiveColorValue = document.getElementById("block-emissive-color-value");
+    emissiveColorInput?.addEventListener("input", () => {
+      this.currentEditingMaterial.emissive = emissiveColorInput.value;
+      if (emissiveColorValue) emissiveColorValue.textContent = emissiveColorInput.value;
+      this.updateBlockPreview();
+    });
+
+    // Checkbox
+    const transparentCheckbox = document.getElementById("block-transparent") as HTMLInputElement;
+    transparentCheckbox?.addEventListener("change", () => {
+      this.currentEditingMaterial.transparent = transparentCheckbox.checked;
+      this.updateBlockPreview();
+    });
+  }
+
+  private setupSlider(id: string, onChange: (value: number) => void): void {
+    const slider = document.getElementById(id) as HTMLInputElement;
+    const valueDisplay = document.getElementById(`${id}-value`);
+
+    slider?.addEventListener("input", () => {
+      const value = parseFloat(slider.value);
+      if (valueDisplay) {
+        valueDisplay.textContent = value.toFixed(value < 1 ? 2 : 1);
+      }
+      onChange(value);
+    });
+  }
+
+  private openBlockEditor(blockId: string): void {
+    if (!this.blockEditorModal) return;
+
+    const block = getBlock(blockId);
+    if (!block) return;
+
+    this.currentEditingBlockId = blockId;
+
+    // Get current material or defaults
+    const material = block.material || {};
+    this.currentEditingMaterial = {
+      metalness: material.metalness ?? DEFAULT_MATERIAL.metalness ?? 0,
+      roughness: material.roughness ?? DEFAULT_MATERIAL.roughness ?? 0.7,
+      emissive: material.emissive || "#000000",
+      emissiveIntensity: material.emissiveIntensity ?? 0,
+      opacity: material.opacity ?? DEFAULT_MATERIAL.opacity ?? 1,
+      transparent: material.transparent ?? DEFAULT_MATERIAL.transparent ?? false,
+    };
+
+    // Update UI with current values
+    const nameEl = document.getElementById("block-editor-name");
+    if (nameEl) nameEl.textContent = block.name;
+
+    this.updateSliderValue("block-metalness", this.currentEditingMaterial.metalness!);
+    this.updateSliderValue("block-roughness", this.currentEditingMaterial.roughness!);
+    this.updateSliderValue("block-emissive-intensity", this.currentEditingMaterial.emissiveIntensity!);
+    this.updateSliderValue("block-opacity", this.currentEditingMaterial.opacity!);
+
+    const emissiveColorInput = document.getElementById("block-emissive-color") as HTMLInputElement;
+    const emissiveColorValue = document.getElementById("block-emissive-color-value");
+    if (emissiveColorInput) emissiveColorInput.value = this.currentEditingMaterial.emissive || "#000000";
+    if (emissiveColorValue) emissiveColorValue.textContent = this.currentEditingMaterial.emissive || "#000000";
+
+    const transparentCheckbox = document.getElementById("block-transparent") as HTMLInputElement;
+    if (transparentCheckbox) transparentCheckbox.checked = this.currentEditingMaterial.transparent || false;
+
+    // Update preview
+    this.updateBlockPreview();
+
+    // Show modal
+    this.blockEditorModal.classList.add("visible");
+  }
+
+  private updateSliderValue(id: string, value: number): void {
+    const slider = document.getElementById(id) as HTMLInputElement;
+    const valueDisplay = document.getElementById(`${id}-value`);
+
+    if (slider) slider.value = String(value);
+    if (valueDisplay) valueDisplay.textContent = value.toFixed(value < 1 ? 2 : 1);
+  }
+
+  private updateBlockPreview(): void {
+    const previewEl = document.getElementById("block-editor-preview");
+    if (!previewEl || !this.currentEditingBlockId) return;
+
+    const block = getBlock(this.currentEditingBlockId);
+    if (!block) return;
+
+    // Build CSS for preview
+    const baseColor = block.color;
+    const metalness = this.currentEditingMaterial.metalness || 0;
+    const roughness = this.currentEditingMaterial.roughness || 0.7;
+    const emissive = this.currentEditingMaterial.emissive || "#000000";
+    const emissiveIntensity = this.currentEditingMaterial.emissiveIntensity || 0;
+    const opacity = this.currentEditingMaterial.opacity || 1;
+
+    // Create a visual representation
+    let background = baseColor;
+
+    // Add metallic sheen effect
+    if (metalness > 0.5) {
+      const sheen = Math.round(metalness * 60);
+      background = `linear-gradient(135deg, ${baseColor} 0%, rgba(255,255,255,${sheen/100}) 50%, ${baseColor} 100%)`;
+    }
+
+    // Add emissive glow
+    let boxShadow = "";
+    if (emissiveIntensity > 0 && emissive !== "#000000") {
+      const glowSize = Math.round(emissiveIntensity * 10);
+      boxShadow = `0 0 ${glowSize}px ${glowSize/2}px ${emissive}, inset 0 0 ${glowSize}px ${emissive}`;
+    }
+
+    previewEl.style.cssText = `
+      width: 80px;
+      height: 80px;
+      border-radius: 8px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      background: ${background};
+      opacity: ${opacity};
+      box-shadow: ${boxShadow};
+      filter: ${roughness < 0.3 ? 'brightness(1.1)' : 'none'};
+    `;
+  }
+
+  private hideBlockEditor(): void {
+    this.blockEditorModal?.classList.remove("visible");
+    this.currentEditingBlockId = null;
+  }
+
+  private applyBlockMaterial(): void {
+    if (!this.currentEditingBlockId) return;
+
+    // Update block in local cache (BlockData)
+    updateBlockLocally(this.currentEditingBlockId, this.currentEditingMaterial);
+
+    // Update structure cache (StructureDefinition)
+    updateStructureMaterial(this.currentEditingBlockId, this.currentEditingMaterial);
+
+    // Emit event so placed blocks can be updated
+    emitEvent("block:materialChanged", {
+      blockId: this.currentEditingBlockId,
+      material: this.currentEditingMaterial,
+    });
+
+    this.showMessage("Material applied! New blocks will use these settings.", 2000);
+    this.hideBlockEditor();
   }
 }

@@ -196,9 +196,9 @@ export interface PostProcessingConfig {
 const DEFAULT_CONFIG: PostProcessingConfig = {
   bloom: {
     enabled: true,
-    strength: 0.4,
-    radius: 0.4,
-    threshold: 0.8,
+    strength: 0.6,
+    radius: 0.5,
+    threshold: 0.5,
   },
   toneMapping: {
     enabled: true,
@@ -442,34 +442,103 @@ export class PostProcessing {
   }
 }
 
-export function createEnhancedLighting(scene: THREE.Scene): {
+export function createEnhancedLighting(
+  scene: THREE.Scene,
+  renderer?: THREE.WebGLRenderer
+): {
   ambientLight: THREE.AmbientLight;
   hemisphereLight: THREE.HemisphereLight;
   directionalLight: THREE.DirectionalLight;
   fillLight: THREE.DirectionalLight;
 } {
-  // Ambient light - brighter with slight green tint
-  const ambientLight = new THREE.AmbientLight(0x606860, 0.6);
+  // Create environment map for metallic reflections if renderer provided
+  // This is crucial for MeshStandardMaterial with metalness > 0
+  if (renderer) {
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+
+    // Create a richer environment for better reflections
+    const envScene = new THREE.Scene();
+
+    // Use a gradient background color for the environment
+    envScene.background = new THREE.Color(0x88aacc);
+
+    // Add multiple lights to create interesting reflections
+    // Sky light (from above)
+    const envSkyLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    envSkyLight.position.set(0, 1, 0);
+    envScene.add(envSkyLight);
+
+    // Warm light from one side (simulates sun)
+    const envSunLight = new THREE.DirectionalLight(0xffffee, 0.6);
+    envSunLight.position.set(1, 0.5, 0.5);
+    envScene.add(envSunLight);
+
+    // Cool fill from opposite side
+    const envFillLight = new THREE.DirectionalLight(0xaaccff, 0.4);
+    envFillLight.position.set(-1, 0.3, -0.5);
+    envScene.add(envFillLight);
+
+    // Ground bounce light
+    const envGroundLight = new THREE.DirectionalLight(0x445544, 0.3);
+    envGroundLight.position.set(0, -1, 0);
+    envScene.add(envGroundLight);
+
+    // Hemisphere for overall gradient
+    const envHemi = new THREE.HemisphereLight(0x88aacc, 0x445544, 0.5);
+    envScene.add(envHemi);
+
+    // Ambient fill
+    const envAmbient = new THREE.AmbientLight(0x666666, 0.5);
+    envScene.add(envAmbient);
+
+    // Generate environment map
+    const envMap = pmremGenerator.fromScene(envScene, 0.04).texture;
+    pmremGenerator.dispose();
+
+    // Set scene environment for all PBR materials (metallic reflections)
+    scene.environment = envMap;
+  }
+
+  // === CINEMATIC 3-POINT LIGHTING ===
+  // Key:Fill:Back ratio approximately 1 : 0.5 : 0.25
+  // Creates depth, dimension, and visual interest
+
+  // Ambient - very low, just to prevent pure black shadows
+  const ambientLight = new THREE.AmbientLight(0x222233, 0.3);
   scene.add(ambientLight);
 
-  // Hemisphere light - brighter natural with green undertones
+  // Hemisphere - subtle environmental fill
   const hemisphereLight = new THREE.HemisphereLight(
-    0xaaccaa, // Sky color (light green-gray)
-    0x4a5a4a, // Ground color (medium green-gray)
-    0.6
+    0x6688aa, // Sky color (cool blue)
+    0x443322, // Ground color (warm shadow)
+    0.4
   );
   scene.add(hemisphereLight);
 
-  // Main directional light - bright white
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
-  directionalLight.position.set(50, 100, 30);
+  // KEY LIGHT - Main light source, brightest, warm color
+  // Position: Upper front-right (classic 45° angle)
+  const directionalLight = new THREE.DirectionalLight(0xfff5e6, 1.5);
+  directionalLight.position.set(60, 100, 40);
   directionalLight.castShadow = false;
   scene.add(directionalLight);
 
-  // Fill light - subtle green tint
-  const fillLight = new THREE.DirectionalLight(0x99dd99, 0.35);
-  fillLight.position.set(-30, 40, -20);
+  // FILL LIGHT - Opposite side of key, cooler color, ~50% of key intensity
+  // Softens shadows without eliminating them
+  const fillLight = new THREE.DirectionalLight(0xaabbdd, 0.7);
+  fillLight.position.set(-50, 40, 30);
   scene.add(fillLight);
+
+  // BACK/RIM LIGHT - Behind subject, creates edge separation
+  // ~25% of key intensity, slightly warm
+  const backLight = new THREE.DirectionalLight(0xffeedd, 0.5);
+  backLight.position.set(-10, 50, -70);
+  scene.add(backLight);
+
+  // KICKER - Secondary rim light from opposite side for more dimension
+  const kickerLight = new THREE.DirectionalLight(0xddddff, 0.3);
+  kickerLight.position.set(40, 30, -50);
+  scene.add(kickerLight);
 
   return { ambientLight, hemisphereLight, directionalLight, fillLight };
 }

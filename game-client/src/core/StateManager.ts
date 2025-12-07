@@ -24,7 +24,8 @@ export type RenderMode = "solid" | "wireframe";
 // - "single-player": No world ID, local saves only
 // - "online": Connected to game server, can save to cloud
 // - "explorer": Has world ID but game server unavailable, read-only view
-export type ConnectionMode = "single-player" | "online" | "explorer";
+// - "dev": Developer mode - save directly to Strapi without game server
+export type ConnectionMode = "single-player" | "online" | "explorer" | "dev";
 
 export interface GameState {
   cameraMode: CameraMode;
@@ -199,11 +200,16 @@ class StateManagerClass {
     return this.state.connectionMode === "explorer";
   }
 
+  isDevMode(): boolean {
+    return this.state.connectionMode === "dev";
+  }
+
   canSave(): boolean {
     // Can save in all modes:
     // - single-player: saves to personal localStorage
     // - online: saves to cloud via game server
     // - explorer: saves to temp localStorage (wiped on leave)
+    // - dev: saves directly to Strapi
     return true;
   }
 

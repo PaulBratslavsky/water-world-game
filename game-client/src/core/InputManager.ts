@@ -25,8 +25,6 @@ export type InputAction =
   | "rotateStructure"
   | "cancel"
   | "toggleViewMode"
-  | "levelUp"
-  | "levelDown"
   | "jetpackUp"
   | "jetpackDown"
   | "toggleHoverMode";
@@ -47,10 +45,6 @@ const DEFAULT_KEY_BINDINGS: Record<string, InputAction> = {
   r: "rotateStructure",
   escape: "cancel",
   v: "toggleViewMode",
-  "[": "levelDown",
-  "]": "levelUp",
-  pageup: "levelUp",
-  pagedown: "levelDown",
   " ": "jetpackUp",
   c: "jetpackDown",  // Changed from shift - shift is used for sprint
   h: "toggleHoverMode",
@@ -138,7 +132,7 @@ export class InputManager {
       this.actionsActive.add(action);
     }
 
-    emitEvent("input:keyDown", { key });
+    emitEvent("input:keyDown", { key, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey });
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {

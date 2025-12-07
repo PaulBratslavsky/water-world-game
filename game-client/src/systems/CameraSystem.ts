@@ -76,9 +76,6 @@ export class CameraSystem {
   // Pointer lock state
   private isPointerLocked: boolean = false;
 
-  // Right mouse button state for build mode camera rotation
-  private isRightMouseDown: boolean = false;
-
   // Reusable objects to avoid GC pressure
   private readonly _forward = new THREE.Vector3();
   private readonly _right = new THREE.Vector3();
@@ -143,23 +140,7 @@ export class CameraSystem {
       this.isPointerLocked = document.pointerLockElement === this.domElement;
     });
 
-    // Right mouse button for camera rotation in build mode
-    this.domElement.addEventListener("mousedown", (e) => {
-      if (e.button === 2) {
-        const mode = stateManager.getCameraMode();
-        if (mode === "build") {
-          this.isRightMouseDown = true;
-        }
-      }
-    });
-
-    document.addEventListener("mouseup", (e) => {
-      if (e.button === 2) {
-        this.isRightMouseDown = false;
-      }
-    });
-
-    // Prevent context menu on right click (build mode uses right-click for camera)
+    // Prevent context menu on right click (build mode uses right-click for deleting blocks)
     this.domElement.addEventListener("contextmenu", (e) => {
       const mode = stateManager.getCameraMode();
       if (mode === "build") {
@@ -191,15 +172,8 @@ export class CameraSystem {
         this.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.pitch));
       }
 
-      // Build mode: right-click drag to rotate camera
-      if (mode === "build" && this.isRightMouseDown) {
-        this.yaw -= e.movementX * this.config.lookSpeed;
-        this.pitch -= e.movementY * this.config.lookSpeed;
-
-        // Clamp pitch
-        const maxPitch = Math.PI / 2 - 0.1;
-        this.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.pitch));
-      }
+      // Build mode: fixed isometric view, no mouse rotation
+      // Use Q/E keys to rotate camera around target
     });
   }
 

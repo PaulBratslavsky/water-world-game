@@ -82,7 +82,8 @@ let prefabsLoaded = false;
 // Strapi configuration from environment
 const STRAPI_URL = import.meta.env.VITE_STRAPI_URL || "http://localhost:1337";
 const STRAPI_API_TOKEN = import.meta.env.VITE_STRAPI_API_TOKEN || "";
-const DEFAULT_API_URL = `${STRAPI_URL}/api/prefabs`;
+// Request 100 items per page to get all prefabs (Strapi defaults to 25)
+const DEFAULT_API_URL = `${STRAPI_URL}/api/prefabs?pagination[pageSize]=100`;
 
 // Helper to get auth headers for Strapi
 function getStrapiHeaders(): HeadersInit {

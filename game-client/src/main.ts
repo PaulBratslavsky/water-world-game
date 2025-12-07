@@ -1953,6 +1953,11 @@ class Game {
       // Apply quality settings using the unified quality level API
       this.placementSystem.setQualityLevel(level);
 
+      // Update greedy mesh toggle UI to match quality preset
+      // (user can still manually override after)
+      const greedyEnabled = this.placementSystem.isGreedyMeshingEnabled();
+      this.performancePanel?.setGreedyState(greedyEnabled);
+
       // Adjust post-processing based on quality
       if (this.postProcessing) {
         switch (level) {
@@ -2041,6 +2046,12 @@ class Game {
       }
     });
 
+    // Set greedy mesh toggle handler
+    this.performancePanel.setGreedyToggleHandler((enabled: boolean) => {
+      this.placementSystem.setGreedyMeshing(enabled);
+      console.log(`Greedy meshing ${enabled ? "enabled" : "disabled"}`);
+    });
+
     // Set day/night toggle handler
     this.performancePanel.setDayNightToggleHandler((isNight: boolean) => {
       this.setNightMode(isNight);
@@ -2057,6 +2068,9 @@ class Game {
     onEvent("selection:applyMaterial", ({ material }) => {
       this.handleSelectionApplyMaterial(material);
     });
+
+    // Apply initial quality settings (default is "high" with greedy meshing enabled)
+    this.placementSystem.setQualityLevel("high");
 
     // Initialize multiplayer first - if server connects, it will provide world state
     // and we skip local loading to avoid sync issues

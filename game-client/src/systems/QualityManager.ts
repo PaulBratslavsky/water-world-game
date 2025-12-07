@@ -40,7 +40,7 @@ const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
   },
   high: {
     level: "high",
-    useGreedyMeshing: false,
+    useGreedyMeshing: true,
     renderDistance: 4,
     shadowsEnabled: true,
     antialias: true,

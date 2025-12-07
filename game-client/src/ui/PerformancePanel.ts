@@ -37,9 +37,11 @@ export class PerformancePanel {
   private postFxToggleHandler: ((enabled: boolean) => void) | null = null;
   private skyToggleHandler: ((enabled: boolean) => void) | null = null;
   private waterToggleHandler: ((enabled: boolean) => void) | null = null;
+  private greedyToggleHandler: ((enabled: boolean) => void) | null = null;
   private dayNightToggleHandler: ((isNight: boolean) => void) | null = null;
   private isBenchmarking: boolean = false;
   private isNightMode: boolean = false;
+  private isGreedyEnabled: boolean = true;
   private currentQuality: QualityLevel = "high";
   private currentPreset: VisualPreset = "default";
   private currentBrightness: number = 1.0;
@@ -131,6 +133,10 @@ export class PerformancePanel {
         <div class="perf-row">
           <span class="perf-label">Water:</span>
           <button class="perf-toggle-btn active" id="perf-water-toggle">ON</button>
+        </div>
+        <div class="perf-row">
+          <span class="perf-label">Greedy Mesh:</span>
+          <button class="perf-toggle-btn active" id="perf-greedy-toggle">ON</button>
         </div>
         <div class="perf-row">
           <span class="perf-label">Day/Night:</span>
@@ -231,6 +237,17 @@ export class PerformancePanel {
       waterBtn.textContent = isActive ? "ON" : "OFF";
       if (this.waterToggleHandler) {
         this.waterToggleHandler(isActive);
+      }
+    });
+
+    // Setup greedy mesh toggle button
+    const greedyBtn = container.querySelector("#perf-greedy-toggle") as HTMLButtonElement;
+    greedyBtn.addEventListener("click", () => {
+      this.isGreedyEnabled = !this.isGreedyEnabled;
+      greedyBtn.classList.toggle("active", this.isGreedyEnabled);
+      greedyBtn.textContent = this.isGreedyEnabled ? "ON" : "OFF";
+      if (this.greedyToggleHandler) {
+        this.greedyToggleHandler(this.isGreedyEnabled);
       }
     });
 
@@ -723,6 +740,25 @@ export class PerformancePanel {
    */
   setWaterToggleHandler(handler: (enabled: boolean) => void): void {
     this.waterToggleHandler = handler;
+  }
+
+  /**
+   * Set the greedy mesh toggle handler
+   */
+  setGreedyToggleHandler(handler: (enabled: boolean) => void): void {
+    this.greedyToggleHandler = handler;
+  }
+
+  /**
+   * Update the greedy mesh button state
+   */
+  setGreedyState(enabled: boolean): void {
+    this.isGreedyEnabled = enabled;
+    const greedyBtn = this.container.querySelector("#perf-greedy-toggle") as HTMLButtonElement;
+    if (greedyBtn) {
+      greedyBtn.classList.toggle("active", enabled);
+      greedyBtn.textContent = enabled ? "ON" : "OFF";
+    }
   }
 
   /**

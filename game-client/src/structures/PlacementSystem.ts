@@ -45,10 +45,10 @@ export const QUALITY_CONFIGS: Record<QualityLevel, QualityConfig> = {
     description: "Greedy meshing with full materials",
   },
   high: {
-    renderMode: "instanced",
-    useGreedyMeshing: false,
+    renderMode: "greedy-full",
+    useGreedyMeshing: true,
     useSimpleMaterial: false,
-    description: "Instanced rendering with full materials",
+    description: "Greedy meshing with full materials (high quality)",
   },
 };
 
@@ -147,8 +147,8 @@ export class PlacementSystem {
   // ============================================
   // QUALITY MODE STATE MACHINE
   // ============================================
-  private currentQualityLevel: QualityLevel = "high";
-  private currentRenderMode: RenderMode = "instanced";
+  private currentQualityLevel: QualityLevel = "medium"; // Start at medium so setQualityLevel("high") actually runs
+  private currentRenderMode: RenderMode = "greedy-full";
 
   constructor(scene: THREE.Scene, config: PlacementConfig) {
     this.scene = scene;
@@ -159,17 +159,25 @@ export class PlacementSystem {
     this.lodManager = new LODManager(config.lodDistances);
     this.setupEventListeners();
 
-    // Add mesh groups to scene - only the active one is visible
-    // Both are added so we can toggle between them without add/remove overhead
+    // Add mesh groups to scene - both start hidden
+    // Visibility is controlled by setQualityLevel() or the initial mode setup below
     this.instancedMeshGroup.visible = false;
     this.greedyMeshGroup.visible = false;
     this.scene.add(this.instancedMeshGroup);
     this.scene.add(this.greedyMeshGroup);
 
-    // Set initial visibility based on mode
+    // Sync initial render mode with useGreedyMeshing config
+    // This ensures currentRenderMode matches the actual visibility state
+    // so that transitions work correctly
     if (this.useGreedyMeshing) {
+      this.currentRenderMode = "greedy-full";
+      this.currentQualityLevel = "medium";
       this.greedyMeshGroup.visible = true;
     } else if (this.useInstancing) {
+      // Legacy instanced mode - set render mode correctly so transitions work
+      this.currentRenderMode = "instanced";
+      // Keep quality level at medium so setQualityLevel("high") triggers a transition
+      this.currentQualityLevel = "medium";
       this.instancedMeshGroup.visible = true;
     }
   }
@@ -200,7 +208,7 @@ export class PlacementSystem {
     // Use material color override if provided, otherwise use base color
     const effectiveColor = mat.color ? hexToNumber(mat.color) : color;
 
-    // In simple mode, only color matters (no transparency, no material properties)
+    // In simple mode, use effective color (with overrides) but ignore other material settings
     if (this.useSimpleMaterial && !isPreview) {
       return "simple_" + effectiveColor.toString(16);
     }
@@ -660,7 +668,7 @@ export class PlacementSystem {
    * Implements the state machine pattern for render mode changes.
    */
   private transitionRenderMode(
-    fromMode: RenderMode,
+    _fromMode: RenderMode,
     toMode: RenderMode,
     config: QualityConfig
   ): void {
@@ -668,24 +676,22 @@ export class PlacementSystem {
     this.greedyMeshDirty = false;
     this.instancesDirty = false;
 
-    // Exit the old mode (cleanup)
-    this.exitRenderMode(fromMode);
+    // ALWAYS clear BOTH groups to prevent any overlap
+    this.instancedMeshGroup.visible = false;
+    this.greedyMeshGroup.visible = false;
+    this.clearInstancedMeshes();
+    this.clearGreedyMeshes();
 
     // Update internal flags
     this.useGreedyMeshing = config.useGreedyMeshing;
 
-    // Handle simple material change
-    if (this.useSimpleMaterial !== config.useSimpleMaterial) {
-      this.useSimpleMaterial = config.useSimpleMaterial;
-
-      // Update materialKey for all block instances
-      for (const instance of this.blockInstances.values()) {
-        instance.materialKey = this.getMaterialCacheKey(instance.color, instance.blockMaterial, false);
-      }
-
-      // Clear material cache to force new materials
-      this.clearMaterialCache();
+    // ALWAYS update materialKeys and clear cache when switching modes
+    // This ensures we don't have stale materials
+    this.useSimpleMaterial = config.useSimpleMaterial;
+    for (const instance of this.blockInstances.values()) {
+      instance.materialKey = this.getMaterialCacheKey(instance.color, instance.blockMaterial, false);
     }
+    this.clearMaterialCache();
 
     // Enter the new mode (setup and rebuild)
     this.enterRenderMode(toMode);
@@ -693,8 +699,10 @@ export class PlacementSystem {
 
   /**
    * Exit a render mode - performs complete cleanup
+   * Note: Currently unused as transitionRenderMode clears both groups,
+   * but kept for potential future selective cleanup needs.
    */
-  private exitRenderMode(mode: RenderMode): void {
+  private _exitRenderMode(mode: RenderMode): void {
     switch (mode) {
       case "instanced":
         this.instancedMeshGroup.visible = false;
@@ -712,6 +720,10 @@ export class PlacementSystem {
    * Enter a render mode - sets visibility and triggers rebuild
    */
   private enterRenderMode(mode: RenderMode): void {
+    // Safety: ensure both groups start hidden to prevent overlap
+    this.instancedMeshGroup.visible = false;
+    this.greedyMeshGroup.visible = false;
+
     switch (mode) {
       case "instanced":
         this.instancedMeshGroup.visible = true;
@@ -799,19 +811,17 @@ export class PlacementSystem {
 
     // Create meshes for each material group
     for (const { geometry, materialKey } of meshedGeometries) {
-      let material = this.materialCache.get(materialKey);
+      let material: THREE.Material | undefined;
+
+      // Try to get from cache first
+      material = this.materialCache.get(materialKey);
 
       // Create material if not in cache
       if (!material) {
         const instance = keyToInstance.get(materialKey);
         if (instance) {
+          // getCachedMaterial handles simple vs full mode internally
           material = this.getCachedMaterial(instance.color, instance.blockMaterial, false);
-        } else {
-          // Fallback: extract color from simple key format "simple_<hexcolor>"
-          if (materialKey.startsWith("simple_")) {
-            const hexColor = parseInt(materialKey.substring(7), 16);
-            material = this.getCachedMaterial(hexColor, undefined, false);
-          }
         }
       }
       if (!material) continue;
@@ -838,7 +848,8 @@ export class PlacementSystem {
    * Clear all greedy meshes
    */
   private clearGreedyMeshes(): void {
-    // Clear meshes from the Map
+    // Clear meshes from the Map - dispose geometry only
+    // (Materials are in the cache and disposed via clearMaterialCache)
     for (const mesh of this.greedyMeshes.values()) {
       mesh.geometry.dispose();
     }
@@ -847,6 +858,9 @@ export class PlacementSystem {
     // Also clear ALL children from the group (in case any weren't in the Map)
     while (this.greedyMeshGroup.children.length > 0) {
       const child = this.greedyMeshGroup.children[0];
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+      }
       this.greedyMeshGroup.remove(child);
     }
   }
@@ -1197,6 +1211,13 @@ export class PlacementSystem {
     // Use material color override if provided, otherwise use base color
     const effectiveColor = mat.color ? hexToNumber(mat.color) : color;
 
+    // Simple mode: flat color with override, but no complex material properties
+    if (this.useSimpleMaterial && !isPreview) {
+      return new THREE.MeshBasicMaterial({
+        color: effectiveColor,
+      });
+    }
+
     // Determine side rendering
     let side: THREE.Side = THREE.FrontSide;
     if (mat.side === "back") side = THREE.BackSide;
@@ -1206,13 +1227,6 @@ export class PlacementSystem {
     const baseOpacity = mat.opacity ?? 1;
     const opacity = isPreview ? Math.min(baseOpacity, 0.6) : baseOpacity;
     const transparent = isPreview || (mat.transparent ?? false) || opacity < 1;
-
-    // Simple mode: just flat color, no lighting calculations at all
-    if (this.useSimpleMaterial && !isPreview) {
-      return new THREE.MeshBasicMaterial({
-        color: effectiveColor,
-      });
-    }
 
     // Create material based on type
     switch (mat.type) {
@@ -2302,8 +2316,13 @@ export class PlacementSystem {
     }
 
     // Force immediate rebuild for bulk import
-    if (this.useInstancing && importedCount > 0) {
-      this.rebuildInstancedMeshesNow();
+    if (importedCount > 0) {
+      if (this.useInstancing) {
+        this.rebuildInstancedMeshesNow();
+      } else {
+        // Greedy meshing mode - rebuild greedy meshes
+        this.rebuildGreedyMeshesNow();
+      }
     }
 
     return importedCount;

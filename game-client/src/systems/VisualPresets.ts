@@ -58,6 +58,20 @@ export interface PresetConfig {
     scanlineIntensity: number;
     chromaticAberration: number;
   };
+  night: {
+    fogColor: number;
+    fogNear: number;
+    fogFar: number;
+    ambientColor: number;
+    ambientIntensity: number;
+    directionalColor: number;
+    directionalIntensity: number;
+    skyZenithColor: number;
+    skyHorizonColor: number;
+    playerLightColor: number;
+    playerLightIntensity: number;
+    playerLightDistance: number;
+  };
 }
 
 export const VISUAL_PRESETS: Record<VisualPreset, PresetConfig> = {
@@ -119,6 +133,20 @@ export const VISUAL_PRESETS: Record<VisualPreset, PresetConfig> = {
       scanlineIntensity: 0.1,
       chromaticAberration: 0.001,
     },
+    night: {
+      fogColor: 0x080810,
+      fogNear: 8,
+      fogFar: 35,
+      ambientColor: 0x101018,
+      ambientIntensity: 0.15,
+      directionalColor: 0x334466, // Faint moonlight
+      directionalIntensity: 0.1,
+      skyZenithColor: 0x020208,
+      skyHorizonColor: 0x0a0a15,
+      playerLightColor: 0xffbb66, // Warm torch
+      playerLightIntensity: 4.0,
+      playerLightDistance: 15,
+    },
   },
 
   matrix: {
@@ -179,6 +207,20 @@ export const VISUAL_PRESETS: Record<VisualPreset, PresetConfig> = {
       scanlineIntensity: 0.2,
       chromaticAberration: 0.003,
     },
+    night: {
+      fogColor: 0x051005,
+      fogNear: 6,
+      fogFar: 30,
+      ambientColor: 0x081808,
+      ambientIntensity: 0.12,
+      directionalColor: 0x115511, // Faint green moonlight
+      directionalIntensity: 0.08,
+      skyZenithColor: 0x010501,
+      skyHorizonColor: 0x051005,
+      playerLightColor: 0x44ff66, // Green torch for Matrix
+      playerLightIntensity: 5.0,
+      playerLightDistance: 18,
+    },
   },
 
   tron: {
@@ -238,6 +280,20 @@ export const VISUAL_PRESETS: Record<VisualPreset, PresetConfig> = {
       colorDepth: 24,
       scanlineIntensity: 0.15,
       chromaticAberration: 0.004,
+    },
+    night: {
+      fogColor: 0x040810,
+      fogNear: 5,
+      fogFar: 28,
+      ambientColor: 0x081020,
+      ambientIntensity: 0.12,
+      directionalColor: 0x224488, // Faint blue moonlight
+      directionalIntensity: 0.08,
+      skyZenithColor: 0x010208,
+      skyHorizonColor: 0x040810,
+      playerLightColor: 0x44ddff, // Cyan torch for Tron
+      playerLightIntensity: 6.0,
+      playerLightDistance: 20,
     },
   },
 };

@@ -84,6 +84,45 @@ const RetroShader = {
   `,
 };
 
+// Simple vignette shader for night mode (no pixelation)
+const VignetteShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    intensity: { value: 0.5 },   // How strong the darkening is
+    softness: { value: 0.4 },    // How soft the edge is
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float intensity;
+    uniform float softness;
+
+    varying vec2 vUv;
+
+    void main() {
+      vec4 color = texture2D(tDiffuse, vUv);
+
+      // Calculate distance from center
+      vec2 center = vUv - 0.5;
+      float dist = length(center) * 2.0; // 0 at center, ~1.4 at corners
+
+      // Create smooth vignette
+      float vignette = smoothstep(1.0 - softness, 1.0 + softness, dist * intensity * 2.0);
+      vignette = 1.0 - vignette * intensity;
+
+      color.rgb *= vignette;
+
+      gl_FragColor = color;
+    }
+  `,
+};
+
 // Color grading LUT shader - supports green (Matrix) and blue (Tron) tints
 const ColorGradeShader = {
   uniforms: {
@@ -227,6 +266,7 @@ export class PostProcessing {
   private bloomPass: UnrealBloomPass;
   private colorGradePass: ShaderPass;
   private retroPass: ShaderPass;
+  private vignettePass: ShaderPass;
   private outputPass: OutputPass;
   private renderer: THREE.WebGLRenderer;
   private config: PostProcessingConfig;
@@ -291,6 +331,13 @@ export class PostProcessing {
     this.retroPass.uniforms.chromaticAberration.value = this.config.retro?.chromaticAberration || 0.002;
     this.retroPass.enabled = this.config.retro?.enabled ?? false;
     this.composer.addPass(this.retroPass);
+
+    // Vignette pass - edge darkening for horror atmosphere (separate from retro)
+    this.vignettePass = new ShaderPass(VignetteShader);
+    this.vignettePass.uniforms.intensity.value = 0.0; // Disabled by default
+    this.vignettePass.uniforms.softness.value = 0.4;
+    this.vignettePass.enabled = false;
+    this.composer.addPass(this.vignettePass);
 
     // Output pass - handles color space conversion
     this.outputPass = new OutputPass();
@@ -362,6 +409,11 @@ export class PostProcessing {
     this.colorGradePass.uniforms.redReduce.value = redReduce;
     this.colorGradePass.uniforms.greenBoost.value = greenBoost;
     this.colorGradePass.uniforms.blueReduce.value = blueReduce;
+  }
+
+  // Vignette control (uses retro pass)
+  setVignetteIntensity(intensity: number): void {
+    this.retroPass.uniforms.vignetteIntensity.value = intensity;
   }
 
   // Retro effect controls

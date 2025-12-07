@@ -37,7 +37,9 @@ export class PerformancePanel {
   private postFxToggleHandler: ((enabled: boolean) => void) | null = null;
   private skyToggleHandler: ((enabled: boolean) => void) | null = null;
   private waterToggleHandler: ((enabled: boolean) => void) | null = null;
+  private dayNightToggleHandler: ((isNight: boolean) => void) | null = null;
   private isBenchmarking: boolean = false;
+  private isNightMode: boolean = false;
   private currentQuality: QualityLevel = "high";
   private currentPreset: VisualPreset = "default";
   private currentBrightness: number = 1.0;
@@ -129,6 +131,10 @@ export class PerformancePanel {
         <div class="perf-row">
           <span class="perf-label">Water:</span>
           <button class="perf-toggle-btn active" id="perf-water-toggle">ON</button>
+        </div>
+        <div class="perf-row">
+          <span class="perf-label">Day/Night:</span>
+          <button class="perf-toggle-btn" id="perf-daynight-toggle">DAY</button>
         </div>
         <div class="perf-divider"></div>
         <div class="perf-row">
@@ -225,6 +231,17 @@ export class PerformancePanel {
       waterBtn.textContent = isActive ? "ON" : "OFF";
       if (this.waterToggleHandler) {
         this.waterToggleHandler(isActive);
+      }
+    });
+
+    // Setup day/night toggle button
+    const dayNightBtn = container.querySelector("#perf-daynight-toggle") as HTMLButtonElement;
+    dayNightBtn.addEventListener("click", () => {
+      this.isNightMode = !this.isNightMode;
+      dayNightBtn.classList.toggle("active", this.isNightMode);
+      dayNightBtn.textContent = this.isNightMode ? "NIGHT" : "DAY";
+      if (this.dayNightToggleHandler) {
+        this.dayNightToggleHandler(this.isNightMode);
       }
     });
 
@@ -706,6 +723,13 @@ export class PerformancePanel {
    */
   setWaterToggleHandler(handler: (enabled: boolean) => void): void {
     this.waterToggleHandler = handler;
+  }
+
+  /**
+   * Set the day/night toggle handler
+   */
+  setDayNightToggleHandler(handler: (isNight: boolean) => void): void {
+    this.dayNightToggleHandler = handler;
   }
 
   /**

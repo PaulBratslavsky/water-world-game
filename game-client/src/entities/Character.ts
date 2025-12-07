@@ -18,6 +18,8 @@ export class Character {
   private mesh: THREE.Group;
   private config: CharacterConfig;
   private currentPosition: THREE.Vector3;
+  private playerLight: THREE.PointLight | null = null;
+  private playerSpotlight: THREE.SpotLight | null = null;
 
   constructor(
     scene: THREE.Scene,
@@ -154,5 +156,76 @@ export class Character {
    */
   isVisible(): boolean {
     return this.mesh.visible;
+  }
+
+  /**
+   * Enable/disable the player's torch light (for night mode)
+   */
+  setLightEnabled(enabled: boolean, config?: { color?: number; intensity?: number; distance?: number }): void {
+    if (enabled) {
+      const color = config?.color ?? 0xffaa44;
+      const intensity = config?.intensity ?? 2.5;
+      const distance = config?.distance ?? 12;
+
+      // Create ambient point light for immediate surroundings
+      if (!this.playerLight) {
+        this.playerLight = new THREE.PointLight(color, intensity * 0.4, distance * 0.5, 1.0);
+        this.playerLight.position.set(0, 1.5, 0);
+        this.mesh.add(this.playerLight);
+      } else {
+        this.playerLight.color.setHex(color);
+        this.playerLight.intensity = intensity * 0.4;
+        this.playerLight.distance = distance * 0.5;
+      }
+
+      // Create spotlight for forward-facing torch beam
+      if (!this.playerSpotlight) {
+        this.playerSpotlight = new THREE.SpotLight(color, intensity, distance, Math.PI / 4, 0.5, 1.0);
+        this.playerSpotlight.position.set(0, 1.6, 0.2);
+        // Target is in front of the character
+        this.playerSpotlight.target.position.set(0, 0.5, 8);
+        this.mesh.add(this.playerSpotlight);
+        this.mesh.add(this.playerSpotlight.target);
+      } else {
+        this.playerSpotlight.color.setHex(color);
+        this.playerSpotlight.intensity = intensity;
+        this.playerSpotlight.distance = distance;
+      }
+    } else if (!enabled) {
+      if (this.playerLight) {
+        this.mesh.remove(this.playerLight);
+        this.playerLight.dispose();
+        this.playerLight = null;
+      }
+      if (this.playerSpotlight) {
+        this.mesh.remove(this.playerSpotlight.target);
+        this.mesh.remove(this.playerSpotlight);
+        this.playerSpotlight.dispose();
+        this.playerSpotlight = null;
+      }
+    }
+  }
+
+  /**
+   * Update player light configuration (when switching themes in night mode)
+   */
+  updateLightConfig(config: { color: number; intensity: number; distance: number }): void {
+    if (this.playerLight) {
+      this.playerLight.color.setHex(config.color);
+      this.playerLight.intensity = config.intensity * 0.4;
+      this.playerLight.distance = config.distance * 0.5;
+    }
+    if (this.playerSpotlight) {
+      this.playerSpotlight.color.setHex(config.color);
+      this.playerSpotlight.intensity = config.intensity;
+      this.playerSpotlight.distance = config.distance;
+    }
+  }
+
+  /**
+   * Check if player light is enabled
+   */
+  isLightEnabled(): boolean {
+    return this.playerLight !== null;
   }
 }

@@ -126,6 +126,12 @@ class Game {
   private isMultiplayer = false;
   private intentionalDisconnect = false;
 
+  // Day/Night mode tracking
+  private isNightMode = false;
+  private currentVisualPreset: VisualPreset = "default";
+  private firstPersonLight: THREE.SpotLight | null = null;
+  private firstPersonAmbient: THREE.PointLight | null = null;
+
   // Reusable THREE objects to avoid GC pressure (see r3f pitfalls)
   private readonly _mouse = new THREE.Vector2();
   private readonly _raycaster = new THREE.Raycaster();
@@ -833,6 +839,13 @@ class Game {
    */
   private applyVisualPreset(presetName: VisualPreset): void {
     const preset = getPreset(presetName);
+    this.currentVisualPreset = presetName;
+
+    // If in night mode, apply night settings instead
+    if (this.isNightMode) {
+      this.applyNightModeFromPreset(preset);
+      return;
+    }
 
     // Update scene config (background, fog)
     this.sceneConfig.applySettings({
@@ -942,6 +955,140 @@ class Game {
     // Also adjust exposure for overall scene brightness
     if (this.postProcessing) {
       this.renderer.toneMappingExposure = brightness;
+    }
+  }
+
+  /**
+   * Toggle night mode - dims lighting and enables player torch
+   */
+  private setNightMode(isNight: boolean): void {
+    this.isNightMode = isNight;
+    const preset = getPreset(this.currentVisualPreset);
+
+    if (isNight) {
+      this.applyNightModeFromPreset(preset);
+    } else {
+      // Re-apply full day mode preset
+      this.applyVisualPreset(this.currentVisualPreset);
+
+      // Disable player torch light
+      this.character.setLightEnabled(false);
+
+      // Remove first-person lights
+      this.removeFirstPersonLight();
+
+      // Restore normal vignette and retro state
+      if (this.postProcessing) {
+        this.postProcessing.setVignetteIntensity(0.3); // Normal vignette
+        // Restore retro state based on preset
+        const presetConfig = getPreset(this.currentVisualPreset);
+        this.postProcessing.setRetroEnabled(presetConfig.retro.enabled);
+      }
+    }
+
+    // Clear cached base intensities so brightness slider recalculates
+    if (this.lights) {
+      (this.lights as any)._baseIntensities = null;
+    }
+  }
+
+  /**
+   * Apply night mode settings from a preset config
+   */
+  private applyNightModeFromPreset(preset: ReturnType<typeof getPreset>): void {
+    const night = preset.night;
+
+    // Night mode - dark sky with theme-appropriate colors
+    if (this.skySystem) {
+      this.skySystem.setZenithColor(night.skyZenithColor);
+      this.skySystem.setHorizonColor(night.skyHorizonColor);
+      this.skySystem.setSunIntensity(0.05);
+      this.skySystem.setCloudOpacity(0.2);
+      this.skySystem.setCloudColor(night.skyHorizonColor);
+    }
+
+    // Apply dense fog to limit visibility - light illuminates through fog
+    this.sceneConfig.applySettings({
+      backgroundColor: night.fogColor,
+      fog: {
+        enabled: true,
+        color: night.fogColor,
+        near: night.fogNear,
+        far: night.fogFar,
+      },
+    });
+
+    // Dim the scene lights significantly
+    if (this.lights) {
+      this.lights.ambientLight.intensity = night.ambientIntensity;
+      this.lights.ambientLight.color.setHex(night.ambientColor);
+      this.lights.hemisphereLight.intensity = night.ambientIntensity * 1.2;
+      this.lights.hemisphereLight.color.setHex(night.ambientColor);
+      this.lights.hemisphereLight.groundColor.setHex(night.fogColor);
+      this.lights.directionalLight.intensity = night.directionalIntensity;
+      this.lights.directionalLight.color.setHex(night.directionalColor);
+      this.lights.fillLight.intensity = night.ambientIntensity * 0.5;
+    }
+
+    // Lower exposure for horror atmosphere
+    this.renderer.toneMappingExposure = 0.8;
+
+    // Enable strong vignette for horror effect using retro pass
+    if (this.postProcessing) {
+      this.postProcessing.setRetroEnabled(true);
+      this.postProcessing.setVignetteIntensity(0.6); // Strong edge darkening
+    }
+
+    // Enable player torch light with theme-appropriate color (third-person)
+    this.character.setLightEnabled(true, {
+      color: night.playerLightColor,
+      intensity: night.playerLightIntensity,
+      distance: night.playerLightDistance,
+    });
+
+    // Create first-person light attached to camera
+    this.createFirstPersonLight(night.playerLightColor, night.playerLightIntensity, night.playerLightDistance);
+  }
+
+  /**
+   * Create first-person flashlight attached to camera
+   */
+  private createFirstPersonLight(color: number, intensity: number, distance: number): void {
+    // Remove existing lights
+    this.removeFirstPersonLight();
+
+    // Create spotlight for flashlight beam
+    this.firstPersonLight = new THREE.SpotLight(color, intensity * 1.5, distance * 1.2, Math.PI / 5, 0.4, 1.0);
+    this.firstPersonLight.position.set(0, 0, 0);
+    this.camera.add(this.firstPersonLight);
+    this.camera.add(this.firstPersonLight.target);
+    this.firstPersonLight.target.position.set(0, -0.5, -10); // Point forward and slightly down
+
+    // Create small ambient light for immediate area
+    this.firstPersonAmbient = new THREE.PointLight(color, intensity * 0.3, distance * 0.4, 1.0);
+    this.firstPersonAmbient.position.set(0, 0, 0);
+    this.camera.add(this.firstPersonAmbient);
+
+    // Make sure camera is in scene
+    if (!this.camera.parent) {
+      this.scene.add(this.camera);
+    }
+  }
+
+  /**
+   * Remove first-person lights
+   */
+  private removeFirstPersonLight(): void {
+    if (this.firstPersonLight) {
+      this.camera.remove(this.firstPersonLight.target);
+      this.camera.remove(this.firstPersonLight);
+      this.firstPersonLight.dispose();
+      this.firstPersonLight = null;
+    }
+    if (this.firstPersonAmbient) {
+      this.camera.remove(this.firstPersonAmbient);
+      this.firstPersonAmbient.dispose();
+      this.firstPersonAmbient = null;
     }
   }
 
@@ -1605,6 +1752,11 @@ class Game {
       if (this.waterSystem) {
         this.waterSystem.setVisible(enabled);
       }
+    });
+
+    // Set day/night toggle handler
+    this.performancePanel.setDayNightToggleHandler((isNight: boolean) => {
+      this.setNightMode(isNight);
     });
 
     // Set selection action callbacks

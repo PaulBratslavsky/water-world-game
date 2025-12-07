@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Grid Builder</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="controls">
+      <div class="control-row">
+        <span class="label">Controls:</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">Left-click - Move / Place</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">Right-click - Remove (Build)</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">WASD - Move camera</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">Q/E - Rotate camera</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">B - Toggle build mode</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">R - Rotate structure</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">F - Free placement toggle</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">P - Select blocks</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">V - Paste (after copy)</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">Scroll - Zoom</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">Esc - Cancel / Exit FP</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">V - Toggle view</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">H - Toggle hover mode</span>
+      </div>
+      <div class="control-row">
+        <span class="hint">Space/C - Fly up/down</span>
+      </div>
+    </div>
+
+    <div id="hover-indicator">
+      <span>HOVER MODE</span>
+    </div>
+
+    <div id="view-toggle">
+      <button id="view-third" class="view-btn active">3rd Person</button>
+      <button id="view-first" class="view-btn">1st Person</button>
+    </div>
+
+    <div id="save-controls">
+      <button id="save-btn" class="save-btn" title="Save current world">Save</button>
+      <button id="join-world-btn" class="join-btn" title="Join a cloud world by ID">Join World</button>
+      <button id="clear-local-btn" class="clear-btn" title="Clear locally saved data">Clear Local</button>
+      <div id="world-status" class="world-status"></div>
+    </div>
+
+    <div id="mode-toggle">
+      <button id="mode-move" class="mode-btn active">Move</button>
+      <button id="mode-build" class="mode-btn">Build</button>
+    </div>
+
+    <div id="build-options">
+      <button id="free-placement-btn" class="option-btn" title="Free Placement (F) - Allow overlapping blocks">Free (F)</button>
+      <button id="capture-prefab-btn" class="option-btn" title="Select Blocks (P) - Select blocks to cut, copy, delete, or save as prefab">Select (P)</button>
+      <button id="wireframe-btn" class="option-btn" title="Toggle Wireframe Mode - Show blocks as wireframes">Wireframe</button>
+      <button id="materials-btn" class="option-btn active" title="Toggle Materials - Show/hide material properties">Materials</button>
+      <span id="build-level-display" class="build-level" title="Build Level ([ and ] to change)">Level: 0</span>
+    </div>
+
+    <div id="structure-menu"></div>
+    <div id="prefab-menu"></div>
+
+    <!-- Join World Modal -->
+    <div id="join-world-modal" class="modal-overlay">
+      <div class="modal-content">
+        <h3 class="modal-title">Join World</h3>
+        <div class="modal-body">
+          <div class="modal-info">
+            <span>Enter a Strapi world ID to connect to cloud saves.</span>
+          </div>
+          <div class="form-group">
+            <label for="world-id-input">World ID</label>
+            <input type="text" id="world-id-input" placeholder="Enter Strapi documentId" />
+          </div>
+          <div class="modal-info" style="font-size: 12px; color: #888;">
+            Find this in Strapi admin: Content Manager > Saves > click entry > copy documentId
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="join-world-cancel-btn" class="modal-btn cancel">Cancel</button>
+          <button id="join-world-connect-btn" class="modal-btn save">Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Selection Action Menu -->
+    <div id="selection-action-menu" class="modal-overlay">
+      <div class="modal-content selection-menu">
+        <h3 class="modal-title">Selection Actions</h3>
+        <div class="modal-body">
+          <div class="modal-info">
+            <span id="selection-block-count">0 blocks selected</span>
+          </div>
+          <div class="selection-actions">
+            <button id="selection-cut-btn" class="action-btn cut" title="Cut (Ctrl+X)">
+              <span class="action-icon">✂</span>
+              <span class="action-label">Cut</span>
+            </button>
+            <button id="selection-copy-btn" class="action-btn copy" title="Copy (Ctrl+C)">
+              <span class="action-icon">📋</span>
+              <span class="action-label">Copy</span>
+            </button>
+            <button id="selection-delete-btn" class="action-btn delete" title="Delete">
+              <span class="action-icon">🗑</span>
+              <span class="action-label">Delete</span>
+            </button>
+            <button id="selection-prefab-btn" class="action-btn prefab" title="Create Prefab">
+              <span class="action-icon">📦</span>
+              <span class="action-label">Create Prefab</span>
+            </button>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="selection-cancel-btn" class="modal-btn cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prefab Save Modal -->
+    <div id="prefab-modal" class="modal-overlay">
+      <div class="modal-content">
+        <h3 class="modal-title">Save Prefab</h3>
+        <div class="modal-body">
+          <div class="modal-info">
+            <span id="prefab-block-count">0 blocks selected</span>
+          </div>
+          <div class="form-group">
+            <label for="prefab-name">Name</label>
+            <input type="text" id="prefab-name" placeholder="My Prefab" />
+          </div>
+          <div class="form-group">
+            <label for="prefab-description">Description (optional)</label>
+            <input type="text" id="prefab-description" placeholder="A cool structure" />
+          </div>
+          <div class="form-group">
+            <label for="prefab-category">Category</label>
+            <select id="prefab-category">
+              <option value="user-created">User Created</option>
+              <option value="decorative">Decorative</option>
+              <option value="structural">Structural</option>
+              <option value="furniture">Furniture</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="prefab-cancel-btn" class="modal-btn cancel">Cancel</button>
+          <button id="prefab-save-btn" class="modal-btn save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

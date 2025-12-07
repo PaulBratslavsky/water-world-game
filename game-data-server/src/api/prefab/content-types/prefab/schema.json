@@ -1,0 +1,50 @@
+{
+  "kind": "collectionType",
+  "collectionName": "prefabs",
+  "info": {
+    "singularName": "prefab",
+    "pluralName": "prefabs",
+    "displayName": "Prefab"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "prefabId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "blocks": {
+      "type": "json",
+      "required": true
+    },
+    "sortOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    },
+    "metadata": {
+      "type": "json"
+    },
+    "category": {
+      "type": "enumeration",
+      "enum": [
+        "built-in",
+        "user-created",
+        "system"
+      ]
+    }
+  }
+}

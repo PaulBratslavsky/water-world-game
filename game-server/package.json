@@ -1,0 +1,21 @@
+{
+  "name": "game-server",
+  "version": "1.0.0",
+  "description": "WebSocket game server for multiplayer synchronization",
+  "type": "module",
+  "main": "dist/GameServer.js",
+  "scripts": {
+    "dev": "tsx watch src/GameServer.ts",
+    "build": "tsc",
+    "start": "node dist/GameServer.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

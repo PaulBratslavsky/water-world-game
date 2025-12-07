@@ -1,0 +1,30 @@
+{
+  "kind": "collectionType",
+  "collectionName": "saves",
+  "info": {
+    "singularName": "save",
+    "pluralName": "saves",
+    "displayName": "Save"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "data": {
+      "type": "json",
+      "required": true
+    },
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "version": {
+      "type": "string",
+      "required": true
+    }
+  }
+}

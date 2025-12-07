@@ -1,0 +1,28 @@
+{
+  "name": "getting-started",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "server": "tsx server/GameServer.ts",
+    "dev:all": "concurrently \"npm run server\" \"npm run dev\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "three": "^0.181.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.181.0",
+    "@types/ws": "^8.5.13",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
+  }
+}

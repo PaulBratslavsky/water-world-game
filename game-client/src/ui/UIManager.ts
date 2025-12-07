@@ -1,0 +1,685 @@
+import { onEvent, emitEvent } from "../core/EventBus";
+import { stateManager, GameMode, ViewMode } from "../core/StateManager";
+import { getAllStructures, StructureDefinition } from "../structures/StructureDefinition";
+import { getAllPrefabs, PrefabDefinition, refreshPrefabs } from "../structures/PrefabDefinition";
+import { savePrefabToStrapi, savePrefabLocally, generatePrefabId, PrefabCategory, PrefabBlockData } from "../structures/PrefabData";
+import { DebugPanel } from "./DebugPanel";
+import { setWorldId, validateWorldId, getWorldId, clearWorldId, WorldInfo } from "../core/SaveSystem";
+
+/**
+ * UIManager - Handles all UI updates and user interactions
+ *
+ * Listens to state changes and updates the DOM accordingly.
+ * Separates UI logic from game logic.
+ */
+
+export class UIManager {
+  private modeToggleContainer: HTMLElement | null;
+  private structureMenuContainer: HTMLElement | null;
+  private prefabMenuContainer: HTMLElement | null;
+  private buildOptionsContainer: HTMLElement | null;
+  private prefabModal: HTMLElement | null;
+  private joinWorldModal: HTMLElement | null;
+  private selectionActionMenu: HTMLElement | null;
+
+  // Prefab capture state
+  private pendingPrefabBlocks: PrefabBlockData[] = [];
+  private getSelectedBlocks: (() => PrefabBlockData[]) | null = null;
+  private pendingBlockCount: number = 0;
+
+  // Selection action callbacks (set by main.ts)
+  private onSelectionCut: (() => void) | null = null;
+  private onSelectionCopy: (() => void) | null = null;
+  private onSelectionDelete: (() => void) | null = null;
+
+  constructor() {
+    this.modeToggleContainer = document.getElementById("mode-toggle");
+    this.structureMenuContainer = document.getElementById("structure-menu");
+    this.prefabMenuContainer = document.getElementById("prefab-menu");
+    this.buildOptionsContainer = document.getElementById("build-options");
+    this.prefabModal = document.getElementById("prefab-modal");
+    this.joinWorldModal = document.getElementById("join-world-modal");
+    this.selectionActionMenu = document.getElementById("selection-action-menu");
+
+    this.setupUI();
+    this.setupEventListeners();
+
+    // Initialize debug panel (self-managing)
+    new DebugPanel();
+  }
+
+  // Allow external systems to provide block getter
+  setBlockGetter(getter: () => PrefabBlockData[]): void {
+    this.getSelectedBlocks = getter;
+  }
+
+  // Set selection action callbacks
+  setSelectionCallbacks(callbacks: {
+    onCut: () => void;
+    onCopy: () => void;
+    onDelete: () => void;
+  }): void {
+    this.onSelectionCut = callbacks.onCut;
+    this.onSelectionCopy = callbacks.onCopy;
+    this.onSelectionDelete = callbacks.onDelete;
+  }
+
+  private setupUI(): void {
+    this.setupModeToggle();
+    this.setupViewToggle();
+    this.setupStructureMenu();
+    this.setupPrefabMenu();
+    this.setupBuildOptions();
+    this.setupSelectionActionMenu();
+    this.setupPrefabModal();
+    this.setupJoinWorldModal();
+    this.checkExistingWorldConnection();
+  }
+
+  /**
+   * Check if we have a saved world ID and restore connection status
+   */
+  private async checkExistingWorldConnection(): Promise<void> {
+    const savedWorldId = getWorldId();
+    if (!savedWorldId) {
+      this.updateWorldStatus("offline", "Offline Mode");
+      return;
+    }
+
+    // Validate the saved world ID still exists
+    console.log("Checking saved world ID:", savedWorldId);
+    const worldInfo = await validateWorldId();
+
+    if (worldInfo) {
+      console.log("Reconnected to saved world:", worldInfo);
+      this.updateWorldStatus("connected", worldInfo);
+      emitEvent("world:connected", { worldId: savedWorldId });
+    } else {
+      console.log("Saved world ID is no longer valid, clearing");
+      clearWorldId();
+      this.updateWorldStatus("offline", "Offline Mode");
+    }
+  }
+
+  private setupModeToggle(): void {
+    const moveBtn = document.getElementById("mode-move");
+    const buildBtn = document.getElementById("mode-build");
+
+    moveBtn?.addEventListener("click", () => stateManager.setMode("move"));
+    buildBtn?.addEventListener("click", () => stateManager.setMode("build"));
+  }
+
+  private setupViewToggle(): void {
+    const thirdBtn = document.getElementById("view-third");
+    const firstBtn = document.getElementById("view-first");
+
+    thirdBtn?.addEventListener("click", () => stateManager.setViewMode("third-person"));
+    firstBtn?.addEventListener("click", () => stateManager.setViewMode("first-person"));
+  }
+
+  private setupBuildOptions(): void {
+    const freePlacementBtn = document.getElementById("free-placement-btn");
+    const capturePrefabBtn = document.getElementById("capture-prefab-btn");
+    const wireframeBtn = document.getElementById("wireframe-btn");
+    const materialsBtn = document.getElementById("materials-btn");
+
+    freePlacementBtn?.addEventListener("click", () => {
+      stateManager.toggleFreePlacement();
+    });
+
+    capturePrefabBtn?.addEventListener("click", () => {
+      stateManager.togglePrefabCaptureMode();
+    });
+
+    wireframeBtn?.addEventListener("click", () => {
+      stateManager.toggleRenderMode();
+    });
+
+    materialsBtn?.addEventListener("click", () => {
+      stateManager.toggleShowMaterials();
+    });
+  }
+
+  private setupSelectionActionMenu(): void {
+    const cutBtn = document.getElementById("selection-cut-btn");
+    const copyBtn = document.getElementById("selection-copy-btn");
+    const deleteBtn = document.getElementById("selection-delete-btn");
+    const prefabBtn = document.getElementById("selection-prefab-btn");
+    const cancelBtn = document.getElementById("selection-cancel-btn");
+
+    cutBtn?.addEventListener("click", () => {
+      this.hideSelectionActionMenu();
+      this.onSelectionCut?.();
+    });
+
+    copyBtn?.addEventListener("click", () => {
+      this.hideSelectionActionMenu();
+      this.onSelectionCopy?.();
+    });
+
+    deleteBtn?.addEventListener("click", () => {
+      this.hideSelectionActionMenu();
+      this.onSelectionDelete?.();
+    });
+
+    prefabBtn?.addEventListener("click", () => {
+      this.hideSelectionActionMenu();
+      this.showPrefabModal(this.pendingBlockCount);
+    });
+
+    cancelBtn?.addEventListener("click", () => {
+      this.hideSelectionActionMenu();
+      emitEvent("selection:cancelled", undefined);
+    });
+  }
+
+  private showSelectionActionMenu(blockCount: number): void {
+    if (!this.selectionActionMenu) return;
+
+    this.pendingBlockCount = blockCount;
+    const blockCountSpan = document.getElementById("selection-block-count");
+    if (blockCountSpan) {
+      blockCountSpan.textContent = `${blockCount} blocks selected`;
+    }
+
+    this.selectionActionMenu.classList.add("visible");
+  }
+
+  private hideSelectionActionMenu(): void {
+    this.selectionActionMenu?.classList.remove("visible");
+  }
+
+  private setupPrefabModal(): void {
+    const cancelBtn = document.getElementById("prefab-cancel-btn");
+    const saveBtn = document.getElementById("prefab-save-btn");
+    const nameInput = document.getElementById("prefab-name") as HTMLInputElement;
+
+    cancelBtn?.addEventListener("click", () => {
+      this.hidePrefabModal();
+      emitEvent("prefabCapture:cancelled", undefined);
+    });
+
+    saveBtn?.addEventListener("click", () => {
+      this.savePrefab();
+    });
+
+    // Enable/disable save button based on name input
+    nameInput?.addEventListener("input", () => {
+      if (saveBtn) {
+        (saveBtn as HTMLButtonElement).disabled = !nameInput.value.trim();
+      }
+    });
+  }
+
+  private setupJoinWorldModal(): void {
+    const joinWorldBtn = document.getElementById("join-world-btn");
+    const cancelBtn = document.getElementById("join-world-cancel-btn");
+    const connectBtn = document.getElementById("join-world-connect-btn");
+    const worldIdInput = document.getElementById("world-id-input") as HTMLInputElement;
+
+    joinWorldBtn?.addEventListener("click", () => {
+      this.showJoinWorldModal();
+    });
+
+    cancelBtn?.addEventListener("click", () => {
+      this.hideJoinWorldModal();
+    });
+
+    connectBtn?.addEventListener("click", () => {
+      this.connectToWorld();
+    });
+
+    // Enable/disable connect button based on input
+    worldIdInput?.addEventListener("input", () => {
+      if (connectBtn) {
+        (connectBtn as HTMLButtonElement).disabled = !worldIdInput.value.trim();
+      }
+    });
+
+    // Allow Enter key to submit
+    worldIdInput?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && worldIdInput.value.trim()) {
+        this.connectToWorld();
+      }
+    });
+  }
+
+  private showJoinWorldModal(): void {
+    if (!this.joinWorldModal) return;
+
+    const worldIdInput = document.getElementById("world-id-input") as HTMLInputElement;
+    const connectBtn = document.getElementById("join-world-connect-btn") as HTMLButtonElement;
+
+    if (worldIdInput) worldIdInput.value = "";
+    if (connectBtn) connectBtn.disabled = true;
+
+    this.joinWorldModal.classList.add("visible");
+    worldIdInput?.focus();
+  }
+
+  private hideJoinWorldModal(): void {
+    this.joinWorldModal?.classList.remove("visible");
+  }
+
+  private async connectToWorld(): Promise<void> {
+    const worldIdInput = document.getElementById("world-id-input") as HTMLInputElement;
+    const connectBtn = document.getElementById("join-world-connect-btn") as HTMLButtonElement;
+
+    const worldId = worldIdInput?.value.trim();
+    console.log("connectToWorld called with:", worldId);
+    if (!worldId) return;
+
+    // Disable button while connecting
+    if (connectBtn) {
+      connectBtn.disabled = true;
+      connectBtn.textContent = "Connecting...";
+    }
+
+    // Validate the world ID exists in Strapi
+    console.log("Setting world ID and validating...");
+    setWorldId(worldId);
+    const worldInfo = await validateWorldId();
+    console.log("World ID validation result:", worldInfo);
+
+    if (worldInfo) {
+      this.hideJoinWorldModal();
+      this.updateWorldStatus("connected", worldInfo);
+      console.log("Emitting world:connected event");
+      emitEvent("world:connected", { worldId });
+    } else {
+      this.updateWorldStatus("error", "Failed to connect. Try again later.");
+      clearWorldId(); // Clear invalid world ID
+      if (connectBtn) {
+        connectBtn.disabled = false;
+        connectBtn.textContent = "Connect";
+      }
+    }
+  }
+
+  private updateWorldStatus(status: "connected" | "error" | "offline" | "none", info?: WorldInfo | string): void {
+    const statusEl = document.getElementById("world-status");
+    const joinBtn = document.getElementById("join-world-btn");
+
+    if (!statusEl) return;
+
+    // Clear all status classes
+    statusEl.classList.remove("connected", "error", "offline");
+
+    if (status === "none") {
+      statusEl.style.display = "none";
+      if (joinBtn) joinBtn.style.display = "block";
+      return;
+    }
+
+    statusEl.classList.add(status);
+
+    if (status === "connected" && typeof info === "object") {
+      // Show world name and version (e.g., "My World v1.0")
+      const displayName = `${info.name} v${info.version}`;
+      statusEl.innerHTML = `${displayName} <button id="leave-world-btn" class="leave-btn">Leave</button>`;
+      statusEl.style.display = "flex";
+
+      // Hide join button when connected
+      if (joinBtn) joinBtn.style.display = "none";
+
+      // Wire up leave button
+      const leaveBtn = document.getElementById("leave-world-btn");
+      leaveBtn?.addEventListener("click", () => this.leaveWorld());
+    } else {
+      // Error or offline status - info is a string message
+      statusEl.textContent = (typeof info === "string" ? info : null) || status;
+      statusEl.style.display = "block";
+      if (joinBtn) joinBtn.style.display = "block";
+    }
+  }
+
+  private leaveWorld(): void {
+    clearWorldId();
+    this.updateWorldStatus("offline", "Offline Mode");
+    emitEvent("world:disconnected", undefined);
+    this.showMessage("Disconnected from world", 2000);
+  }
+
+  private showPrefabModal(blockCount: number): void {
+    if (!this.prefabModal) return;
+
+    // Reset form
+    const nameInput = document.getElementById("prefab-name") as HTMLInputElement;
+    const descInput = document.getElementById("prefab-description") as HTMLInputElement;
+    const categorySelect = document.getElementById("prefab-category") as HTMLSelectElement;
+    const blockCountSpan = document.getElementById("prefab-block-count");
+    const saveBtn = document.getElementById("prefab-save-btn") as HTMLButtonElement;
+
+    if (nameInput) nameInput.value = "";
+    if (descInput) descInput.value = "";
+    if (categorySelect) categorySelect.value = "user-created";
+    if (blockCountSpan) blockCountSpan.textContent = `${blockCount} blocks selected`;
+    if (saveBtn) saveBtn.disabled = true;
+
+    this.prefabModal.classList.add("visible");
+
+    // Focus name input
+    nameInput?.focus();
+  }
+
+  private hidePrefabModal(): void {
+    this.prefabModal?.classList.remove("visible");
+    this.pendingPrefabBlocks = [];
+  }
+
+  private async savePrefab(): Promise<void> {
+    const nameInput = document.getElementById("prefab-name") as HTMLInputElement;
+    const descInput = document.getElementById("prefab-description") as HTMLInputElement;
+    const categorySelect = document.getElementById("prefab-category") as HTMLSelectElement;
+
+    const name = nameInput?.value.trim();
+    if (!name) return;
+
+    // Get blocks from capture system
+    if (this.getSelectedBlocks) {
+      this.pendingPrefabBlocks = this.getSelectedBlocks();
+    }
+
+    if (this.pendingPrefabBlocks.length === 0) {
+      this.showMessage("No blocks selected", 2000);
+      return;
+    }
+
+    const prefabId = generatePrefabId();
+    const description = descInput?.value.trim() || "";
+    const category = (categorySelect?.value || "user-created") as PrefabCategory;
+
+    const prefabPayload = {
+      prefabId,
+      name,
+      description,
+      blocks: this.pendingPrefabBlocks,
+      category,
+      sortOrder: 100,
+      isActive: true,
+      createdBy: "player",
+      metadata: {},
+    };
+
+    // Try to save to Strapi first
+    const savedPrefab = await savePrefabToStrapi(prefabPayload);
+
+    if (savedPrefab) {
+      this.showMessage(`Prefab "${name}" saved to server!`, 2000);
+      emitEvent("prefabCapture:saved", { prefabId, name });
+    } else {
+      // Fallback to local save if Strapi fails
+      savePrefabLocally(prefabPayload);
+      this.showMessage(`Prefab "${name}" saved locally (server unavailable)`, 3000);
+      emitEvent("prefabCapture:saved", { prefabId, name });
+    }
+
+    // Refresh prefabs data and menu
+    refreshPrefabs();
+    this.refreshPrefabMenu();
+
+    this.hidePrefabModal();
+    stateManager.setPrefabCaptureMode(false);
+  }
+
+  private refreshPrefabMenu(): void {
+    if (!this.prefabMenuContainer) return;
+
+    // Clear existing prefabs (keep title)
+    const title = this.prefabMenuContainer.querySelector(".menu-title");
+    this.prefabMenuContainer.innerHTML = "";
+    if (title) {
+      this.prefabMenuContainer.appendChild(title);
+    } else {
+      const newTitle = document.createElement("div");
+      newTitle.className = "menu-title";
+      newTitle.textContent = "Prefabs";
+      this.prefabMenuContainer.appendChild(newTitle);
+    }
+
+    // Re-add prefabs
+    const prefabs = getAllPrefabs();
+    prefabs.forEach((prefab) => {
+      const button = this.createPrefabButton(prefab);
+      this.prefabMenuContainer!.appendChild(button);
+    });
+  }
+
+  private setupStructureMenu(): void {
+    if (!this.structureMenuContainer) return;
+
+    // Add title
+    const title = document.createElement("div");
+    title.className = "menu-title";
+    title.textContent = "Blocks";
+    this.structureMenuContainer.appendChild(title);
+
+    // Add grid container for blocks
+    const grid = document.createElement("div");
+    grid.className = "menu-grid";
+    this.structureMenuContainer.appendChild(grid);
+
+    const structures = getAllStructures();
+
+    structures.forEach((structure) => {
+      const button = this.createStructureButton(structure);
+      grid.appendChild(button);
+    });
+  }
+
+  private setupPrefabMenu(): void {
+    if (!this.prefabMenuContainer) return;
+
+    // Add title
+    const title = document.createElement("div");
+    title.className = "menu-title";
+    title.textContent = "Prefabs";
+    this.prefabMenuContainer.appendChild(title);
+
+    const prefabs = getAllPrefabs();
+
+    prefabs.forEach((prefab) => {
+      const button = this.createPrefabButton(prefab);
+      this.prefabMenuContainer!.appendChild(button);
+    });
+  }
+
+  private createPrefabButton(prefab: PrefabDefinition): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.className = "prefab-btn";
+    button.dataset.prefabId = prefab.id;
+    button.innerHTML = `
+      <span class="prefab-name">${prefab.name}</span>
+      <span class="prefab-desc">${prefab.description}</span>
+    `;
+
+    button.addEventListener("click", () => {
+      emitEvent("prefab:selected", { prefabId: prefab.id });
+    });
+
+    return button;
+  }
+
+  private createStructureButton(structure: StructureDefinition): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.className = "structure-btn";
+    button.dataset.structureId = structure.id;
+    button.innerHTML = `
+      <span class="structure-icon" style="background-color: #${structure.color.toString(16).padStart(6, "0")}"></span>
+      <span class="structure-name">${structure.name}</span>
+    `;
+
+    button.addEventListener("click", () => {
+      stateManager.selectStructure(structure.id);
+    });
+
+    return button;
+  }
+
+  private setupEventListeners(): void {
+    // Listen to state changes
+    onEvent("state:modeChanged", ({ mode }) => {
+      this.updateModeUI(mode);
+    });
+
+    onEvent("state:viewModeChanged", ({ viewMode }) => {
+      this.updateViewModeUI(viewMode);
+    });
+
+    onEvent("structure:selected", ({ structureId }) => {
+      this.updateStructureSelection(structureId);
+    });
+
+    onEvent("structure:placementCancelled", () => {
+      this.clearStructureSelection();
+    });
+
+    onEvent("structure:placed", () => {
+      // Structure menu stays visible for continuous placement
+    });
+
+    onEvent("state:freePlacementChanged", ({ enabled }) => {
+      this.updateFreePlacementUI(enabled);
+    });
+
+    onEvent("state:prefabCaptureChanged", ({ active }) => {
+      this.updatePrefabCaptureUI(active);
+    });
+
+    // Show selection action menu when selection completes
+    onEvent("selection:complete", ({ blockCount }) => {
+      this.showSelectionActionMenu(blockCount);
+    });
+
+    // Also listen to legacy event for backward compatibility
+    onEvent("prefabCapture:selectionComplete", ({ blockCount }) => {
+      // Only show if selection action menu isn't already visible
+      if (!this.selectionActionMenu?.classList.contains("visible")) {
+        this.showSelectionActionMenu(blockCount);
+      }
+    });
+
+    onEvent("structure:levelChanged", ({ level }) => {
+      this.updateBuildLevelUI(level);
+    });
+
+    onEvent("state:renderModeChanged", ({ renderMode }) => {
+      this.updateRenderModeUI(renderMode === "wireframe");
+    });
+
+    onEvent("state:showMaterialsChanged", ({ show }) => {
+      this.updateMaterialsUI(show);
+    });
+
+    // Capture mode also uses the same level display via structure:levelChanged event
+  }
+
+  private updateBuildLevelUI(level: number): void {
+    const levelDisplay = document.getElementById("build-level-display");
+    if (levelDisplay) {
+      // Display 1-based level (internal is 0-based)
+      levelDisplay.textContent = `Level: ${level + 1}`;
+    }
+  }
+
+  private updateModeUI(mode: GameMode): void {
+    const moveBtn = document.getElementById("mode-move");
+    const buildBtn = document.getElementById("mode-build");
+
+    moveBtn?.classList.toggle("active", mode === "move");
+    buildBtn?.classList.toggle("active", mode === "build");
+
+    this.structureMenuContainer?.classList.toggle("visible", mode === "build");
+    this.prefabMenuContainer?.classList.toggle("visible", mode === "build");
+    this.buildOptionsContainer?.classList.toggle("visible", mode === "build");
+  }
+
+  private updateFreePlacementUI(enabled: boolean): void {
+    const freePlacementBtn = document.getElementById("free-placement-btn");
+    freePlacementBtn?.classList.toggle("active", enabled);
+  }
+
+  private updateRenderModeUI(wireframe: boolean): void {
+    const wireframeBtn = document.getElementById("wireframe-btn");
+    wireframeBtn?.classList.toggle("active", wireframe);
+  }
+
+  private updateMaterialsUI(showMaterials: boolean): void {
+    const materialsBtn = document.getElementById("materials-btn");
+    materialsBtn?.classList.toggle("active", showMaterials);
+  }
+
+  private updatePrefabCaptureUI(active: boolean): void {
+    const capturePrefabBtn = document.getElementById("capture-prefab-btn");
+    capturePrefabBtn?.classList.toggle("active", active);
+
+    // Reset level display when exiting capture mode
+    if (!active) {
+      const levelDisplay = document.getElementById("build-level-display");
+      if (levelDisplay) {
+        levelDisplay.textContent = "Level: 0";
+      }
+    }
+  }
+
+  private updateViewModeUI(viewMode: ViewMode): void {
+    const thirdBtn = document.getElementById("view-third");
+    const firstBtn = document.getElementById("view-first");
+
+    thirdBtn?.classList.toggle("active", viewMode === "third-person");
+    firstBtn?.classList.toggle("active", viewMode === "first-person");
+
+    // Hide mode toggle in first-person
+    if (this.modeToggleContainer) {
+      this.modeToggleContainer.style.display = viewMode === "first-person" ? "none" : "flex";
+    }
+
+    // Update controls hints based on view mode
+    this.updateControlsHints(viewMode);
+  }
+
+  private updateControlsHints(_viewMode: ViewMode): void {
+    // Could dynamically update the controls panel based on current mode
+    // For now, the static HTML covers both modes
+  }
+
+  private updateStructureSelection(structureId: string): void {
+    document.querySelectorAll(".structure-btn").forEach((btn) => {
+      const btnElement = btn as HTMLElement;
+      btn.classList.toggle("selected", btnElement.dataset.structureId === structureId);
+    });
+  }
+
+  private clearStructureSelection(): void {
+    document.querySelectorAll(".structure-btn").forEach((btn) => {
+      btn.classList.remove("selected");
+    });
+  }
+
+  /**
+   * Show a temporary message on screen
+   */
+  showMessage(message: string, duration: number = 2000): void {
+    const messageEl = document.createElement("div");
+    messageEl.className = "ui-message";
+    messageEl.textContent = message;
+    messageEl.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 15px 30px;
+      border-radius: 8px;
+      font-family: sans-serif;
+      z-index: 1000;
+    `;
+
+    document.body.appendChild(messageEl);
+
+    setTimeout(() => {
+      messageEl.remove();
+    }, duration);
+  }
+}

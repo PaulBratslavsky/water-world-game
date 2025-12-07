@@ -1,0 +1,61 @@
+{
+    "kind": "collectionType",
+    "collectionName": "blocks",
+    "info": {
+      "singularName": "block",
+      "pluralName": "blocks",
+      "displayName": "Block"
+    },
+    "options": {
+      "draftAndPublish": true
+    },
+    "pluginOptions": {},
+    "attributes": {
+      "blockId": {
+        "type": "string",
+        "unique": true,
+        "required": true
+      },
+      "name": {
+        "type": "string",
+        "required": true
+      },
+      "description": {
+        "type": "text"
+      },
+      "cells": {
+        "type": "json",
+        "required": true
+      },
+      "color": {
+        "type": "string",
+        "required": true
+      },
+      "height": {
+        "type": "decimal",
+        "default": 1
+      },
+      "category": {
+        "type": "enumeration",
+        "enum": ["basic", "nature", "industrial",
+  "materials"],
+        "default": "basic"
+      },
+      "sortOrder": {
+        "type": "integer",
+        "default": 0
+      },
+      "isActive": {
+        "type": "boolean",
+        "default": true
+      },
+      "material": {
+        "type": "json",
+        "default": null
+      },
+      "metadata": {
+        "type": "json",
+        "default": {}
+      }
+    }
+  }

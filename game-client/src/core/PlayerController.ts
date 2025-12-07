@@ -39,6 +39,7 @@ export class PlayerController {
   private playerHeight: number;
   private maxStepHeight: number;
   private cellSize: number;
+  private turnSpeed: number = 10; // Radians per second for smooth turning
 
   // Hover mode - when enabled, jetpack controls work
   private hoverMode: boolean = false;
@@ -132,12 +133,31 @@ export class PlayerController {
     // Update moving state
     this.state.isMoving = length > 0;
 
-    // Update rotation to face movement direction
+    // Update rotation to face movement direction (smooth turning)
     if (this.state.isMoving) {
-      this.state.rotation = Math.atan2(
+      const targetRotation = Math.atan2(
         this.state.velocity.x,
         this.state.velocity.z
       );
+
+      // Calculate the shortest angle difference
+      let angleDiff = targetRotation - this.state.rotation;
+
+      // Normalize to -PI to PI range
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+      // Smoothly interpolate rotation
+      const maxTurn = this.turnSpeed * deltaTime;
+      if (Math.abs(angleDiff) <= maxTurn) {
+        this.state.rotation = targetRotation;
+      } else {
+        this.state.rotation += Math.sign(angleDiff) * maxTurn;
+      }
+
+      // Normalize final rotation to -PI to PI
+      while (this.state.rotation > Math.PI) this.state.rotation -= Math.PI * 2;
+      while (this.state.rotation < -Math.PI) this.state.rotation += Math.PI * 2;
     }
 
     // Toggle hover mode with H key

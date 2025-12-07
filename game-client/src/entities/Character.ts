@@ -20,6 +20,8 @@ export class Character {
   private currentPosition: THREE.Vector3;
   private playerLight: THREE.PointLight | null = null;
   private playerSpotlight: THREE.SpotLight | null = null;
+  private fogParticles: THREE.Points | null = null;
+  private particleVelocities: Float32Array | null = null;
 
   constructor(
     scene: THREE.Scene,
@@ -169,28 +171,32 @@ export class Character {
 
       // Create ambient point light for immediate surroundings
       if (!this.playerLight) {
-        this.playerLight = new THREE.PointLight(color, intensity * 0.4, distance * 0.5, 1.0);
+        this.playerLight = new THREE.PointLight(color, intensity * 0.5, distance * 0.6, 1.0);
         this.playerLight.position.set(0, 1.5, 0);
         this.mesh.add(this.playerLight);
       } else {
         this.playerLight.color.setHex(color);
-        this.playerLight.intensity = intensity * 0.4;
-        this.playerLight.distance = distance * 0.5;
+        this.playerLight.intensity = intensity * 0.5;
+        this.playerLight.distance = distance * 0.6;
       }
 
       // Create spotlight for forward-facing torch beam
       if (!this.playerSpotlight) {
-        this.playerSpotlight = new THREE.SpotLight(color, intensity, distance, Math.PI / 4, 0.5, 1.0);
+        this.playerSpotlight = new THREE.SpotLight(color, intensity * 1.5, distance, Math.PI / 5, 0.3, 1.0);
         this.playerSpotlight.position.set(0, 1.6, 0.2);
         // Target is in front of the character
-        this.playerSpotlight.target.position.set(0, 0.5, 8);
+        this.playerSpotlight.target.position.set(0, 0.5, 10);
         this.mesh.add(this.playerSpotlight);
         this.mesh.add(this.playerSpotlight.target);
       } else {
         this.playerSpotlight.color.setHex(color);
-        this.playerSpotlight.intensity = intensity;
+        this.playerSpotlight.intensity = intensity * 1.5;
         this.playerSpotlight.distance = distance;
       }
+
+      // Create fog particles in the light beam
+      this.createFogParticles(color, distance);
+
     } else if (!enabled) {
       if (this.playerLight) {
         this.mesh.remove(this.playerLight);
@@ -203,7 +209,111 @@ export class Character {
         this.playerSpotlight.dispose();
         this.playerSpotlight = null;
       }
+      this.removeFogParticles();
     }
+  }
+
+  /**
+   * Create floating fog particles in the light beam
+   */
+  private createFogParticles(color: number, distance: number): void {
+    this.removeFogParticles();
+
+    const particleCount = 80;
+    const positions = new Float32Array(particleCount * 3);
+    const sizes = new Float32Array(particleCount);
+    this.particleVelocities = new Float32Array(particleCount * 3);
+
+    // Distribute particles in a cone shape
+    for (let i = 0; i < particleCount; i++) {
+      const t = Math.random(); // 0 to 1 along the cone
+      const z = t * distance * 0.6 + 0.5; // Distance from player
+      const radius = t * distance * 0.25; // Cone gets wider further out
+      const angle = Math.random() * Math.PI * 2;
+
+      positions[i * 3] = Math.cos(angle) * radius * Math.random();
+      positions[i * 3 + 1] = Math.sin(angle) * radius * Math.random() - 0.3; // Slightly below center
+      positions[i * 3 + 2] = z;
+
+      sizes[i] = 0.1 + Math.random() * 0.15;
+
+      // Random drift velocities
+      this.particleVelocities[i * 3] = (Math.random() - 0.5) * 0.02;
+      this.particleVelocities[i * 3 + 1] = (Math.random() - 0.5) * 0.015;
+      this.particleVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.01;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+    // Create particle material
+    const material = new THREE.PointsMaterial({
+      color: color,
+      size: 0.15,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+
+    this.fogParticles = new THREE.Points(geometry, material);
+    this.fogParticles.position.set(0, 1.6, 0.2);
+    this.mesh.add(this.fogParticles);
+  }
+
+  /**
+   * Remove fog particles
+   */
+  private removeFogParticles(): void {
+    if (this.fogParticles) {
+      this.mesh.remove(this.fogParticles);
+      this.fogParticles.geometry.dispose();
+      (this.fogParticles.material as THREE.Material).dispose();
+      this.fogParticles = null;
+      this.particleVelocities = null;
+    }
+  }
+
+  /**
+   * Update fog particles animation (call each frame)
+   */
+  updateFogParticles(deltaTime: number): void {
+    if (!this.fogParticles || !this.particleVelocities) return;
+
+    const positions = this.fogParticles.geometry.attributes.position as THREE.BufferAttribute;
+    const count = positions.count;
+
+    for (let i = 0; i < count; i++) {
+      // Update position with velocity
+      positions.array[i * 3] += this.particleVelocities[i * 3] * deltaTime * 60;
+      positions.array[i * 3 + 1] += this.particleVelocities[i * 3 + 1] * deltaTime * 60;
+      positions.array[i * 3 + 2] += this.particleVelocities[i * 3 + 2] * deltaTime * 60;
+
+      // Get current position
+      const x = positions.array[i * 3];
+      const y = positions.array[i * 3 + 1];
+      const z = positions.array[i * 3 + 2];
+
+      // Reset if particle drifts too far
+      const distance = Math.sqrt(x * x + y * y);
+      const maxRadius = z * 0.4;
+
+      if (distance > maxRadius || z < 0.3 || z > 15) {
+        // Reset to random position in cone
+        const t = Math.random();
+        const newZ = t * 10 + 0.5;
+        const radius = t * 3 * Math.random();
+        const angle = Math.random() * Math.PI * 2;
+
+        positions.array[i * 3] = Math.cos(angle) * radius;
+        positions.array[i * 3 + 1] = Math.sin(angle) * radius - 0.3;
+        positions.array[i * 3 + 2] = newZ;
+      }
+    }
+
+    positions.needsUpdate = true;
   }
 
   /**

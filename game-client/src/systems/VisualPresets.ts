@@ -143,9 +143,9 @@ export const VISUAL_PRESETS: Record<VisualPreset, PresetConfig> = {
       directionalIntensity: 0.1,
       skyZenithColor: 0x020208,
       skyHorizonColor: 0x0a0a15,
-      playerLightColor: 0xffbb66, // Warm torch
-      playerLightIntensity: 4.0,
-      playerLightDistance: 15,
+      playerLightColor: 0xffcc77, // Warm torch
+      playerLightIntensity: 8.0,
+      playerLightDistance: 20,
     },
   },
 
@@ -217,9 +217,9 @@ export const VISUAL_PRESETS: Record<VisualPreset, PresetConfig> = {
       directionalIntensity: 0.08,
       skyZenithColor: 0x010501,
       skyHorizonColor: 0x051005,
-      playerLightColor: 0x44ff66, // Green torch for Matrix
-      playerLightIntensity: 5.0,
-      playerLightDistance: 18,
+      playerLightColor: 0x66ff88, // Green torch for Matrix
+      playerLightIntensity: 10.0,
+      playerLightDistance: 22,
     },
   },
 
@@ -291,9 +291,9 @@ export const VISUAL_PRESETS: Record<VisualPreset, PresetConfig> = {
       directionalIntensity: 0.08,
       skyZenithColor: 0x010208,
       skyHorizonColor: 0x040810,
-      playerLightColor: 0x44ddff, // Cyan torch for Tron
-      playerLightIntensity: 6.0,
-      playerLightDistance: 20,
+      playerLightColor: 0x66eeff, // Cyan torch for Tron
+      playerLightIntensity: 12.0,
+      playerLightDistance: 25,
     },
   },
 };

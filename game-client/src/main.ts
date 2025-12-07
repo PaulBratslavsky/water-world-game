@@ -131,6 +131,8 @@ class Game {
   private currentVisualPreset: VisualPreset = "default";
   private firstPersonLight: THREE.SpotLight | null = null;
   private firstPersonAmbient: THREE.PointLight | null = null;
+  private firstPersonParticles: THREE.Points | null = null;
+  private firstPersonParticleVelocities: Float32Array | null = null;
 
   // Reusable THREE objects to avoid GC pressure (see r3f pitfalls)
   private readonly _mouse = new THREE.Vector2();
@@ -1069,6 +1071,9 @@ class Game {
     this.firstPersonAmbient.position.set(0, 0, 0);
     this.camera.add(this.firstPersonAmbient);
 
+    // Create fog particles for first-person view
+    this.createFirstPersonParticles(color, distance);
+
     // Make sure camera is in scene
     if (!this.camera.parent) {
       this.scene.add(this.camera);
@@ -1076,7 +1081,87 @@ class Game {
   }
 
   /**
-   * Remove first-person lights
+   * Create fog particles for first-person flashlight
+   */
+  private createFirstPersonParticles(color: number, distance: number): void {
+    const particleCount = 100;
+    const positions = new Float32Array(particleCount * 3);
+    this.firstPersonParticleVelocities = new Float32Array(particleCount * 3);
+
+    // Distribute particles in front of camera in a cone shape
+    for (let i = 0; i < particleCount; i++) {
+      const t = Math.random();
+      const z = -(t * distance * 0.8 + 1); // Negative Z is forward
+      const radius = Math.abs(z) * 0.3;
+      const angle = Math.random() * Math.PI * 2;
+
+      positions[i * 3] = Math.cos(angle) * radius * Math.random();
+      positions[i * 3 + 1] = Math.sin(angle) * radius * Math.random() - 0.2;
+      positions[i * 3 + 2] = z;
+
+      // Random drift velocities
+      this.firstPersonParticleVelocities[i * 3] = (Math.random() - 0.5) * 0.015;
+      this.firstPersonParticleVelocities[i * 3 + 1] = (Math.random() - 0.5) * 0.012;
+      this.firstPersonParticleVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.008;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const material = new THREE.PointsMaterial({
+      color: color,
+      size: 0.12,
+      transparent: true,
+      opacity: 0.35,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+
+    this.firstPersonParticles = new THREE.Points(geometry, material);
+    this.camera.add(this.firstPersonParticles);
+  }
+
+  /**
+   * Update first-person fog particles
+   */
+  private updateFirstPersonParticles(deltaTime: number): void {
+    if (!this.firstPersonParticles || !this.firstPersonParticleVelocities) return;
+
+    const positions = this.firstPersonParticles.geometry.attributes.position as THREE.BufferAttribute;
+    const count = positions.count;
+
+    for (let i = 0; i < count; i++) {
+      // Update position with velocity
+      positions.array[i * 3] += this.firstPersonParticleVelocities[i * 3] * deltaTime * 60;
+      positions.array[i * 3 + 1] += this.firstPersonParticleVelocities[i * 3 + 1] * deltaTime * 60;
+      positions.array[i * 3 + 2] += this.firstPersonParticleVelocities[i * 3 + 2] * deltaTime * 60;
+
+      const x = positions.array[i * 3];
+      const y = positions.array[i * 3 + 1];
+      const z = positions.array[i * 3 + 2];
+
+      // Reset if particle drifts too far
+      const dist = Math.sqrt(x * x + y * y);
+      const maxRadius = Math.abs(z) * 0.35;
+
+      if (dist > maxRadius || z > -0.5 || z < -18) {
+        const t = Math.random();
+        const newZ = -(t * 15 + 1);
+        const radius = Math.abs(newZ) * 0.25 * Math.random();
+        const angle = Math.random() * Math.PI * 2;
+
+        positions.array[i * 3] = Math.cos(angle) * radius;
+        positions.array[i * 3 + 1] = Math.sin(angle) * radius - 0.2;
+        positions.array[i * 3 + 2] = newZ;
+      }
+    }
+
+    positions.needsUpdate = true;
+  }
+
+  /**
+   * Remove first-person lights and particles
    */
   private removeFirstPersonLight(): void {
     if (this.firstPersonLight) {
@@ -1089,6 +1174,13 @@ class Game {
       this.camera.remove(this.firstPersonAmbient);
       this.firstPersonAmbient.dispose();
       this.firstPersonAmbient = null;
+    }
+    if (this.firstPersonParticles) {
+      this.camera.remove(this.firstPersonParticles);
+      this.firstPersonParticles.geometry.dispose();
+      (this.firstPersonParticles.material as THREE.Material).dispose();
+      this.firstPersonParticles = null;
+      this.firstPersonParticleVelocities = null;
     }
   }
 
@@ -2242,6 +2334,22 @@ class Game {
       // Update character visual
       this.character.setPositionFromVector(playerPos);
       this.character.setRotation(this.playerController.getRotation());
+
+      // Update fog particles if in night mode
+      if (this.isNightMode) {
+        // Third-person: show character's fog particles, hide first-person particles
+        // First-person: hide character's fog particles, show first-person particles
+        if (cameraMode === "first-person") {
+          this.updateFirstPersonParticles(deltaTime);
+          if (this.firstPersonParticles) this.firstPersonParticles.visible = true;
+        } else {
+          this.character.updateFogParticles(deltaTime);
+          if (this.firstPersonParticles) this.firstPersonParticles.visible = false;
+        }
+      } else {
+        // Day mode - ensure all fog particles are hidden
+        if (this.firstPersonParticles) this.firstPersonParticles.visible = false;
+      }
 
       // Update camera to follow player
       this.cameraSystem.setPlayerPosition(playerPos);

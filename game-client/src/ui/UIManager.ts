@@ -40,6 +40,7 @@ export class UIManager {
   // Block editor state
   private currentEditingBlockId: string | null = null;
   private currentEditingMaterial: BlockMaterial = {};
+  private isEditingSelection: boolean = false;
 
   constructor() {
     this.modeToggleContainer = document.getElementById("mode-toggle");
@@ -158,6 +159,7 @@ export class UIManager {
     const copyBtn = document.getElementById("selection-copy-btn");
     const deleteBtn = document.getElementById("selection-delete-btn");
     const prefabBtn = document.getElementById("selection-prefab-btn");
+    const materialBtn = document.getElementById("selection-material-btn");
     const cancelBtn = document.getElementById("selection-cancel-btn");
 
     cutBtn?.addEventListener("click", () => {
@@ -190,6 +192,14 @@ export class UIManager {
       this.isActionProcessing = true;
       this.hideSelectionActionMenu();
       this.showPrefabModal(this.pendingBlockCount);
+      setTimeout(() => { this.isActionProcessing = false; }, 300);
+    });
+
+    materialBtn?.addEventListener("click", () => {
+      if (this.isActionProcessing) return;
+      this.isActionProcessing = true;
+      this.hideSelectionActionMenu();
+      this.openSelectionMaterialEditor();
       setTimeout(() => { this.isActionProcessing = false; }, 300);
     });
 
@@ -862,22 +872,22 @@ export class UIManager {
     // Setup slider input handlers
     this.setupSlider("block-metalness", (value) => {
       this.currentEditingMaterial.metalness = value;
-      this.updateBlockPreview();
+      this.updateEditorPreview();
     });
 
     this.setupSlider("block-roughness", (value) => {
       this.currentEditingMaterial.roughness = value;
-      this.updateBlockPreview();
+      this.updateEditorPreview();
     });
 
     this.setupSlider("block-emissive-intensity", (value) => {
       this.currentEditingMaterial.emissiveIntensity = value;
-      this.updateBlockPreview();
+      this.updateEditorPreview();
     });
 
     this.setupSlider("block-opacity", (value) => {
       this.currentEditingMaterial.opacity = value;
-      this.updateBlockPreview();
+      this.updateEditorPreview();
     });
 
     // Color picker
@@ -886,15 +896,23 @@ export class UIManager {
     emissiveColorInput?.addEventListener("input", () => {
       this.currentEditingMaterial.emissive = emissiveColorInput.value;
       if (emissiveColorValue) emissiveColorValue.textContent = emissiveColorInput.value;
-      this.updateBlockPreview();
+      this.updateEditorPreview();
     });
 
     // Checkbox
     const transparentCheckbox = document.getElementById("block-transparent") as HTMLInputElement;
     transparentCheckbox?.addEventListener("change", () => {
       this.currentEditingMaterial.transparent = transparentCheckbox.checked;
-      this.updateBlockPreview();
+      this.updateEditorPreview();
     });
+  }
+
+  private updateEditorPreview(): void {
+    if (this.isEditingSelection) {
+      this.updateSelectionPreview();
+    } else {
+      this.updateBlockPreview();
+    }
   }
 
   private setupSlider(id: string, onChange: (value: number) => void): void {
@@ -916,6 +934,7 @@ export class UIManager {
     const block = getBlock(blockId);
     if (!block) return;
 
+    this.isEditingSelection = false;
     this.currentEditingBlockId = blockId;
 
     // Get current material or defaults
@@ -1010,6 +1029,16 @@ export class UIManager {
   }
 
   private applyBlockMaterial(): void {
+    if (this.isEditingSelection) {
+      // Apply material to all selected blocks
+      emitEvent("selection:applyMaterial", {
+        material: this.currentEditingMaterial,
+      });
+      this.showMessage(`Material applied to ${this.pendingBlockCount} blocks!`, 2000);
+      this.hideBlockEditor();
+      return;
+    }
+
     if (!this.currentEditingBlockId) return;
 
     // Update block in local cache (BlockData)
@@ -1026,5 +1055,82 @@ export class UIManager {
 
     this.showMessage("Material applied! New blocks will use these settings.", 2000);
     this.hideBlockEditor();
+  }
+
+  private openSelectionMaterialEditor(): void {
+    if (!this.blockEditorModal) return;
+
+    this.isEditingSelection = true;
+    this.currentEditingBlockId = null;
+
+    // Start with default material values
+    this.currentEditingMaterial = {
+      metalness: 0,
+      roughness: 0.7,
+      emissive: "#000000",
+      emissiveIntensity: 0,
+      opacity: 1,
+      transparent: false,
+    };
+
+    // Update UI
+    const nameEl = document.getElementById("block-editor-name");
+    if (nameEl) nameEl.textContent = `${this.pendingBlockCount} Selected Blocks`;
+
+    this.updateSliderValue("block-metalness", this.currentEditingMaterial.metalness!);
+    this.updateSliderValue("block-roughness", this.currentEditingMaterial.roughness!);
+    this.updateSliderValue("block-emissive-intensity", this.currentEditingMaterial.emissiveIntensity!);
+    this.updateSliderValue("block-opacity", this.currentEditingMaterial.opacity!);
+
+    const emissiveColorInput = document.getElementById("block-emissive-color") as HTMLInputElement;
+    const emissiveColorValue = document.getElementById("block-emissive-color-value");
+    if (emissiveColorInput) emissiveColorInput.value = "#000000";
+    if (emissiveColorValue) emissiveColorValue.textContent = "#000000";
+
+    const transparentCheckbox = document.getElementById("block-transparent") as HTMLInputElement;
+    if (transparentCheckbox) transparentCheckbox.checked = false;
+
+    // Update preview with a neutral color
+    this.updateSelectionPreview();
+
+    // Show modal
+    this.blockEditorModal.classList.add("visible");
+  }
+
+  private updateSelectionPreview(): void {
+    const previewEl = document.getElementById("block-editor-preview");
+    if (!previewEl) return;
+
+    const metalness = this.currentEditingMaterial.metalness || 0;
+    const emissive = this.currentEditingMaterial.emissive || "#000000";
+    const emissiveIntensity = this.currentEditingMaterial.emissiveIntensity || 0;
+    const opacity = this.currentEditingMaterial.opacity || 1;
+    const roughness = this.currentEditingMaterial.roughness || 0.7;
+
+    // Use a neutral gray for selection preview
+    const baseColor = "#808080";
+    let background = baseColor;
+
+    if (metalness > 0.5) {
+      const sheen = Math.round(metalness * 60);
+      background = `linear-gradient(135deg, ${baseColor} 0%, rgba(255,255,255,${sheen/100}) 50%, ${baseColor} 100%)`;
+    }
+
+    let boxShadow = "";
+    if (emissiveIntensity > 0 && emissive !== "#000000") {
+      const glowSize = Math.round(emissiveIntensity * 10);
+      boxShadow = `0 0 ${glowSize}px ${glowSize/2}px ${emissive}, inset 0 0 ${glowSize}px ${emissive}`;
+    }
+
+    previewEl.style.cssText = `
+      width: 80px;
+      height: 80px;
+      border-radius: 8px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      background: ${background};
+      opacity: ${opacity};
+      box-shadow: ${boxShadow};
+      filter: ${roughness < 0.3 ? 'brightness(1.1)' : 'none'};
+    `;
   }
 }

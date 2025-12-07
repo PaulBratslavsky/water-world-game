@@ -157,9 +157,10 @@ export class CameraSystem {
         this.yaw -= e.movementX * this.config.lookSpeed;
         this.pitch -= e.movementY * this.config.lookSpeed;
 
-        // Clamp pitch to prevent flipping
-        const maxPitch = Math.PI / 2 - 0.1;
-        this.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.pitch));
+        // Clamp pitch to prevent flipping and looking below floor
+        const maxPitch = Math.PI / 2 - 0.1; // ~80 degrees up
+        const minPitch = -Math.PI / 2 + 0.1; // ~80 degrees down (still reasonable for FP)
+        this.pitch = Math.max(minPitch, Math.min(maxPitch, this.pitch));
       }
 
       // Third-person: free mouse look (like first-person but with pointer lock)
@@ -167,9 +168,13 @@ export class CameraSystem {
         this.yaw -= e.movementX * this.config.lookSpeed;
         this.pitch -= e.movementY * this.config.lookSpeed;
 
-        // Clamp pitch
-        const maxPitch = Math.PI / 2 - 0.1;
-        this.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.pitch));
+        // Clamp pitch - prevent camera from going below floor level
+        // Negative pitch = looking down (camera goes up and behind)
+        // Positive pitch = looking up (camera goes down - BAD, goes under floor)
+        // So we severely limit positive pitch
+        const maxPitch = -0.1; // Must always look slightly down (camera stays above)
+        const minPitch = -Math.PI / 2.2; // Allow looking down (~82 degrees down)
+        this.pitch = Math.max(minPitch, Math.min(maxPitch, this.pitch));
       }
 
       // Build mode: fixed isometric view, no mouse rotation
@@ -305,9 +310,14 @@ export class CameraSystem {
     const horizontalDist = this.currentDistance * Math.cos(-this.pitch);
     const verticalDist = this.currentDistance * Math.sin(-this.pitch);
 
+    let cameraY = this.playerPosition.y + this.config.thirdPersonHeight + verticalDist;
+    // Hard floor constraint - never go below player's feet level
+    const minCameraHeight = this.playerPosition.y + 0.5;
+    cameraY = Math.max(minCameraHeight, cameraY);
+
     this._cameraPosition.set(
       this.playerPosition.x + horizontalDist * Math.sin(this.yaw),
-      this.playerPosition.y + this.config.thirdPersonHeight + verticalDist,
+      cameraY,
       this.playerPosition.z + horizontalDist * Math.cos(this.yaw)
     );
 
@@ -368,9 +378,14 @@ export class CameraSystem {
     const horizontalDist = this.buildDistance * Math.cos(-this.pitch);
     const verticalDist = this.buildDistance * Math.sin(-this.pitch);
 
+    let cameraY = this.buildTargetPosition.y + this.config.thirdPersonHeight + verticalDist;
+    // Hard floor constraint - never go below target's level
+    const minCameraHeight = this.buildTargetPosition.y + 0.5;
+    cameraY = Math.max(minCameraHeight, cameraY);
+
     this._cameraPosition.set(
       this.buildTargetPosition.x + horizontalDist * Math.sin(this.yaw),
-      this.buildTargetPosition.y + this.config.thirdPersonHeight + verticalDist,
+      cameraY,
       this.buildTargetPosition.z + horizontalDist * Math.cos(this.yaw)
     );
 
@@ -435,9 +450,21 @@ export class CameraSystem {
   }
 
   /**
-   * Set pitch directly (for syncing)
+   * Set pitch directly (for syncing) - respects floor constraint
    */
   setPitch(pitch: number): void {
-    this.pitch = pitch;
+    const mode = stateManager.getCameraMode();
+
+    if (mode === "third-person" || mode === "build") {
+      // Prevent going below floor - must always look slightly down
+      const maxPitch = -0.1;
+      const minPitch = -Math.PI / 2.2;
+      this.pitch = Math.max(minPitch, Math.min(maxPitch, pitch));
+    } else {
+      // First-person allows more range
+      const maxPitch = Math.PI / 2 - 0.1;
+      const minPitch = -Math.PI / 2 + 0.1;
+      this.pitch = Math.max(minPitch, Math.min(maxPitch, pitch));
+    }
   }
 }

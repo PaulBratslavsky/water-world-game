@@ -890,6 +890,15 @@ canvas {
   border-color: rgba(40, 167, 69, 0.8);
 }
 
+.action-btn.material {
+  border-color: rgba(156, 39, 176, 0.5);
+}
+
+.action-btn.material:hover {
+  background: rgba(156, 39, 176, 0.2);
+  border-color: rgba(156, 39, 176, 0.8);
+}
+
 /* Block Editor Modal */
 .modal-content.block-editor {
   min-width: 360px;

@@ -33,6 +33,18 @@ function getStrapiHeaders(): HeadersInit {
 let currentWorldId: string | null = localStorage.getItem(WORLD_ID_KEY);
 
 /**
+ * Material properties that can be saved per block
+ */
+export interface SavedBlockMaterial {
+  metalness?: number;
+  roughness?: number;
+  emissive?: string;
+  emissiveIntensity?: number;
+  opacity?: number;
+  transparent?: boolean;
+}
+
+/**
  * Represents a single placed block in the save file
  */
 export interface SavedBlock {
@@ -40,6 +52,7 @@ export interface SavedBlock {
   x: number;         // Grid X position
   y: number;         // Grid Y position (height level)
   z: number;         // Grid Z position
+  material?: SavedBlockMaterial;  // Optional custom material override
 }
 
 /**

@@ -1804,6 +1804,48 @@ export class PlacementSystem {
     return true;
   }
 
+  // Update material for a block at a specific position
+  updateBlockMaterial(gridX: number, gridY: number, gridZ: number, material: BlockMaterial): boolean {
+    const key = cellKey3D(gridX, gridY, gridZ);
+
+    // Check if there's a block at this exact position
+    if (!this.occupiedCells.has(key)) {
+      return false;
+    }
+
+    if (this.useInstancing) {
+      // Get existing instance
+      const instance = this.blockInstances.get(key);
+      if (!instance) return false;
+
+      // Remove old instance
+      this.removeBlockInstance(key);
+
+      // Merge new material with existing
+      const newMaterial: BlockMaterial = {
+        ...instance.blockMaterial,
+        ...material,
+      };
+
+      // Re-add with new material
+      this.addBlockInstance(
+        key,
+        instance.blockId,
+        instance.gridX,
+        instance.gridY,
+        instance.gridZ,
+        instance.color,
+        newMaterial
+      );
+
+      // Mark dirty and trigger immediate rebuild
+      this.instancesDirty = true;
+      this.rebuildInstancedMeshesNow();
+    }
+
+    return true;
+  }
+
   // Is currently in placement mode
   isPlacing(): boolean {
     return this.currentStructure !== null;
@@ -2113,15 +2155,25 @@ export class PlacementSystem {
   /**
    * Export all placed blocks as an array for saving
    */
-  exportBlocks(): Array<{ blockId: string; x: number; y: number; z: number }> {
-    const blocks: Array<{ blockId: string; x: number; y: number; z: number }> = [];
+  exportBlocks(): Array<{ blockId: string; x: number; y: number; z: number; material?: BlockMaterial }> {
+    const blocks: Array<{ blockId: string; x: number; y: number; z: number; material?: BlockMaterial }> = [];
 
     // Iterate through all occupied cells and export their data
     for (const key of this.occupiedCells) {
       const blockId = this.cellBlockIds.get(key);
       if (blockId) {
         const [x, y, z] = key.split(",").map(Number);
-        blocks.push({ blockId, x, y, z });
+
+        // Get custom material if any from block instances
+        const instance = this.blockInstances.get(key);
+        const material = instance?.blockMaterial;
+
+        // Only include material if it has custom properties
+        if (material && Object.keys(material).length > 0) {
+          blocks.push({ blockId, x, y, z, material });
+        } else {
+          blocks.push({ blockId, x, y, z });
+        }
       }
     }
 
@@ -2131,7 +2183,7 @@ export class PlacementSystem {
   /**
    * Import blocks from saved data, recreating meshes
    */
-  importBlocks(blocks: Array<{ blockId: string; x: number; y: number; z: number }>): number {
+  importBlocks(blocks: Array<{ blockId: string; x: number; y: number; z: number; material?: BlockMaterial }>): number {
     let importedCount = 0;
 
     for (const block of blocks) {
@@ -2151,6 +2203,9 @@ export class PlacementSystem {
       this.occupiedCells.add(key);
       this.cellBlockIds.set(key, block.blockId);
 
+      // Use custom material if provided, otherwise use structure's default material
+      const blockMaterial = block.material || structure.material;
+
       // Update height map
       const heightKey = `${block.x},${block.z}`;
       const currentHeight = this.heightMap.get(heightKey) || 0;
@@ -2159,8 +2214,8 @@ export class PlacementSystem {
       let mesh: THREE.Group;
 
       if (this.useInstancing) {
-        // Add to instanced rendering
-        this.getCachedMaterial(structure.color, structure.material, false);
+        // Add to instanced rendering with custom material if provided
+        this.getCachedMaterial(structure.color, blockMaterial, false);
         this.addBlockInstance(
           key,
           block.blockId,
@@ -2168,7 +2223,7 @@ export class PlacementSystem {
           block.y,
           block.z,
           structure.color,
-          structure.material
+          blockMaterial
         );
         mesh = new THREE.Group(); // Empty placeholder
       } else {

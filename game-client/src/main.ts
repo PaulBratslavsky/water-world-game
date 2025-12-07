@@ -1255,6 +1255,33 @@ class Game {
     this.prefabCaptureSystem.clearAndExit();
   }
 
+  private handleSelectionApplyMaterial(material: {
+    metalness?: number;
+    roughness?: number;
+    emissive?: string;
+    emissiveIntensity?: number;
+    opacity?: number;
+    transparent?: boolean;
+  }): void {
+    if (!this.prefabCaptureSystem) return;
+
+    const blocks = this.prefabCaptureSystem.getRawBlocksInSelection();
+    let updatedCount = 0;
+
+    for (const block of blocks) {
+      // Update the block's material in the placement system
+      const updated = this.placementSystem.updateBlockMaterial(block.x, block.y, block.z, material);
+      if (updated) {
+        updatedCount++;
+      }
+    }
+
+    console.log(`Updated material for ${updatedCount} blocks`);
+
+    // Clear selection and exit mode
+    this.prefabCaptureSystem.clearAndExit();
+  }
+
   private deleteSelectedBlocks(): void {
     if (!this.prefabCaptureSystem) return;
 
@@ -1585,6 +1612,11 @@ class Game {
       onCut: () => this.handleSelectionCut(),
       onCopy: () => this.handleSelectionCopy(),
       onDelete: () => this.handleSelectionDelete(),
+    });
+
+    // Handle selection material changes
+    onEvent("selection:applyMaterial", ({ material }) => {
+      this.handleSelectionApplyMaterial(material);
     });
 
     // Initialize multiplayer first - if server connects, it will provide world state

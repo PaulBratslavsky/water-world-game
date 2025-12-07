@@ -143,6 +143,16 @@ export interface GameEvents {
       transparent?: boolean;
     };
   };
+  "selection:applyMaterial": {
+    material: {
+      metalness?: number;
+      roughness?: number;
+      emissive?: string;
+      emissiveIntensity?: number;
+      opacity?: number;
+      transparent?: boolean;
+    };
+  };
 
   // Prefab events
   "prefab:selected": { prefabId: string };

@@ -990,6 +990,9 @@ export class PlacementSystem {
     };
   }
 
+  // Track render mode before entering build mode (for restoration)
+  private renderModeBeforeBuildMode: RenderMode | null = null;
+
   /**
    * Set blocks below the specified level to wireframe mode.
    * Blocks at or above the level render normally (solid).
@@ -997,6 +1000,8 @@ export class PlacementSystem {
    *
    * Performance: Creates separate instanced meshes for wireframe vs solid,
    * only rebuilds when entering/exiting build mode (not on level change).
+   * Note: Wireframe only works in instanced mode, so we temporarily switch
+   * to instanced mode when entering build mode.
    */
   setGrayscaleBelowLevel(level: number | null): void {
     const previousLevel = this.dimOverlay?.userData?.level as number | null | undefined;
@@ -1010,11 +1015,37 @@ export class PlacementSystem {
     }
     this.dimOverlay.userData.level = level;
 
-    // Only rebuild when entering or exiting wireframe mode
-    if (wasActive !== willBeActive) {
+    // Entering build mode - switch to instanced mode for wireframe support
+    if (!wasActive && willBeActive) {
+      if (this.currentRenderMode !== "instanced") {
+        this.renderModeBeforeBuildMode = this.currentRenderMode;
+        // Temporarily switch to instanced mode
+        this.greedyMeshGroup.visible = false;
+        this.instancedMeshGroup.visible = true;
+        this.currentRenderMode = "instanced";
+      }
       this.rebuildWithWireframeSupport(level);
-    } else if (willBeActive && previousLevel !== level) {
-      // Level changed - update which meshes are visible
+    }
+    // Exiting build mode - restore previous render mode
+    else if (wasActive && !willBeActive) {
+      this.rebuildWithWireframeSupport(null);
+      if (this.renderModeBeforeBuildMode !== null) {
+        // Restore previous render mode
+        this.currentRenderMode = this.renderModeBeforeBuildMode;
+        if (this.renderModeBeforeBuildMode === "instanced") {
+          this.instancedMeshGroup.visible = true;
+          this.greedyMeshGroup.visible = false;
+        } else {
+          this.instancedMeshGroup.visible = false;
+          this.greedyMeshGroup.visible = true;
+          // Rebuild greedy meshes since we were using instanced
+          this.rebuildGreedyMeshes();
+        }
+        this.renderModeBeforeBuildMode = null;
+      }
+    }
+    // Level changed while in build mode
+    else if (willBeActive && previousLevel !== level) {
       this.updateWireframeVisibility(level);
     }
   }

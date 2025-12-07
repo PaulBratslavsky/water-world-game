@@ -744,6 +744,18 @@ export class PerformancePanel {
   }
 
   /**
+   * Update the day/night button state (called when entering/exiting build mode)
+   */
+  setDayNightState(isNight: boolean): void {
+    this.isNightMode = isNight;
+    const dayNightBtn = this.container.querySelector("#perf-daynight-toggle") as HTMLButtonElement;
+    if (dayNightBtn) {
+      dayNightBtn.classList.toggle("active", isNight);
+      dayNightBtn.textContent = isNight ? "NIGHT" : "DAY";
+    }
+  }
+
+  /**
    * Update the brightness slider (called when preset changes)
    */
   setBrightness(value: number): void {

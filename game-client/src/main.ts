@@ -128,6 +128,7 @@ class Game {
 
   // Day/Night mode tracking
   private isNightMode = false;
+  private wasNightModeBeforeBuild = false;
   private currentVisualPreset: VisualPreset = "default";
   private firstPersonLight: THREE.SpotLight | null = null;
   private firstPersonAmbient: THREE.PointLight | null = null;
@@ -433,13 +434,22 @@ class Game {
         this.cameraSystem.setBuildTargetPosition(playerPos.x, playerPos.z);
         // Sync InputManager ground plane
         this.inputManager.setGroundPlaneHeight(this.sharedBuildLevel);
-        // Enable grayscale effect for blocks below build level
+        // Enable wireframe effect for blocks below build level
         this.placementSystem.setGrayscaleBelowLevel(this.sharedBuildLevel);
         // Emit level changed event for UI
         emitEvent("structure:levelChanged", {
           level: this.sharedBuildLevel,
           maxLevel: 50,
         });
+
+        // Force day mode in build mode (save night state to restore later)
+        if (this.isNightMode) {
+          this.wasNightModeBeforeBuild = true;
+          // Apply day mode only if we were in night mode
+          this.isNightMode = false;
+          this.applyDayMode();
+          this.performancePanel?.setDayNightState(false);
+        }
       }
 
       // When exiting build mode, teleport player to the ghost block position
@@ -454,8 +464,15 @@ class Game {
         // Also update character position to match
         this.character.setPositionFromVector(playerPos);
 
-        // Disable grayscale effect when exiting build mode
+        // Disable wireframe effect when exiting build mode
         this.placementSystem.setGrayscaleBelowLevel(null);
+
+        // Restore night mode if it was active before entering build mode
+        if (this.wasNightModeBeforeBuild) {
+          this.wasNightModeBeforeBuild = false;
+          this.setNightMode(true);
+          this.performancePanel?.setDayNightState(true);
+        }
       }
     });
 
@@ -845,7 +862,7 @@ class Game {
 
     // If in night mode, apply night settings instead
     if (this.isNightMode) {
-      this.applyNightModeFromPreset(preset);
+      this.applyNightMode();
       return;
     }
 
@@ -961,31 +978,15 @@ class Game {
   }
 
   /**
-   * Toggle night mode - dims lighting and enables player torch
+   * Toggle night mode - completely resets scene to day or night settings
    */
   private setNightMode(isNight: boolean): void {
     this.isNightMode = isNight;
-    const preset = getPreset(this.currentVisualPreset);
 
     if (isNight) {
-      this.applyNightModeFromPreset(preset);
+      this.applyNightMode();
     } else {
-      // Re-apply full day mode preset
-      this.applyVisualPreset(this.currentVisualPreset);
-
-      // Disable player torch light
-      this.character.setLightEnabled(false);
-
-      // Remove first-person lights
-      this.removeFirstPersonLight();
-
-      // Restore normal vignette and retro state
-      if (this.postProcessing) {
-        this.postProcessing.setVignetteIntensity(0.3); // Normal vignette
-        // Restore retro state based on preset
-        const presetConfig = getPreset(this.currentVisualPreset);
-        this.postProcessing.setRetroEnabled(presetConfig.retro.enabled);
-      }
+      this.applyDayMode();
     }
 
     // Clear cached base intensities so brightness slider recalculates
@@ -995,12 +996,105 @@ class Game {
   }
 
   /**
-   * Apply night mode settings from a preset config
+   * Apply full day mode settings - resets everything to daytime
    */
-  private applyNightModeFromPreset(preset: ReturnType<typeof getPreset>): void {
+  private applyDayMode(): void {
+    const preset = getPreset(this.currentVisualPreset);
+
+    // === FIRST: Remove all night mode objects (lights, particles) ===
+    // Remove character torch light and fog particles
+    this.character.setLightEnabled(false);
+    // Remove first-person flashlight and particles
+    this.removeFirstPersonLight();
+
+    // === SKY ===
+    if (this.skySystem) {
+      this.skySystem.setZenithColor(preset.sky.zenithColor);
+      this.skySystem.setHorizonColor(preset.sky.horizonColor);
+      this.skySystem.setCloudColor(preset.sky.cloudColor);
+      this.skySystem.setCloudOpacity(preset.sky.cloudOpacity);
+      this.skySystem.setCloudSpeed(preset.sky.cloudSpeed);
+      this.skySystem.setCloudDensity(preset.sky.cloudDensity);
+      this.skySystem.setSunColor(preset.sky.sunColor);
+      this.skySystem.setSunIntensity(preset.sky.sunIntensity);
+    }
+
+    // === FOG & BACKGROUND ===
+    this.sceneConfig.applySettings({
+      backgroundColor: preset.scene.backgroundColor,
+      fog: {
+        enabled: true,
+        color: preset.scene.fogColor,
+        near: preset.scene.fogNear,
+        far: preset.scene.fogFar,
+      },
+    });
+
+    // === LIGHTING ===
+    if (this.lights) {
+      this.lights.ambientLight.color.setHex(preset.lighting.ambientColor);
+      this.lights.ambientLight.intensity = preset.lighting.ambientIntensity;
+      this.lights.hemisphereLight.color.setHex(preset.lighting.hemisphereColorSky);
+      this.lights.hemisphereLight.groundColor.setHex(preset.lighting.hemisphereColorGround);
+      this.lights.hemisphereLight.intensity = preset.lighting.hemisphereIntensity;
+      this.lights.directionalLight.color.setHex(preset.lighting.directionalColor);
+      this.lights.directionalLight.intensity = preset.lighting.directionalIntensity;
+      this.lights.fillLight.color.setHex(preset.lighting.fillColor);
+      this.lights.fillLight.intensity = preset.lighting.fillIntensity;
+    }
+
+    // === EXPOSURE ===
+    this.renderer.toneMappingExposure = preset.postProcessing.exposure;
+
+    // === POST-PROCESSING - Reset ALL settings ===
+    if (this.postProcessing) {
+      // First, completely disable retro pass
+      this.postProcessing.setRetroEnabled(false);
+
+      // Reset bloom
+      this.postProcessing.setBloomStrength(preset.postProcessing.bloomStrength);
+      this.postProcessing.setBloomRadius(preset.postProcessing.bloomRadius);
+      this.postProcessing.setBloomThreshold(preset.postProcessing.bloomThreshold);
+
+      // Reset color grading
+      this.postProcessing.setGreenTint(preset.postProcessing.greenTint);
+      this.postProcessing.setBlueTint(preset.postProcessing.blueTint);
+      this.postProcessing.setContrast(preset.postProcessing.contrast);
+      this.postProcessing.setSaturation(preset.postProcessing.saturation);
+      this.postProcessing.setColorChannels(
+        preset.colorGrade.redReduce,
+        preset.colorGrade.greenBoost,
+        preset.colorGrade.blueReduce
+      );
+
+      // Reset retro shader uniforms to preset defaults (even while disabled)
+      this.postProcessing.setRetroSettings({
+        pixelSize: preset.retro.pixelSize,
+        colorDepth: preset.retro.colorDepth,
+        scanlineIntensity: preset.retro.scanlineIntensity,
+        chromaticAberration: preset.retro.chromaticAberration,
+      });
+      // Vignette to 0 (no edge darkening in day mode)
+      this.postProcessing.setVignetteIntensity(0.0);
+
+      // Only enable retro if preset specifically wants it (e.g., Tron)
+      if (preset.retro.enabled) {
+        this.postProcessing.setRetroEnabled(true);
+      }
+    }
+
+    // === UPDATE UI ===
+    this.performancePanel?.setRetroState(preset.retro.enabled);
+  }
+
+  /**
+   * Apply full night mode settings - dark atmosphere with player torch
+   */
+  private applyNightMode(): void {
+    const preset = getPreset(this.currentVisualPreset);
     const night = preset.night;
 
-    // Night mode - dark sky with theme-appropriate colors
+    // === SKY - Dark ===
     if (this.skySystem) {
       this.skySystem.setZenithColor(night.skyZenithColor);
       this.skySystem.setHorizonColor(night.skyHorizonColor);
@@ -1009,7 +1103,7 @@ class Game {
       this.skySystem.setCloudColor(night.skyHorizonColor);
     }
 
-    // Apply dense fog to limit visibility - light illuminates through fog
+    // === FOG - Dense and dark ===
     this.sceneConfig.applySettings({
       backgroundColor: night.fogColor,
       fog: {
@@ -1020,7 +1114,7 @@ class Game {
       },
     });
 
-    // Dim the scene lights significantly
+    // === LIGHTING - Dimmed ===
     if (this.lights) {
       this.lights.ambientLight.intensity = night.ambientIntensity;
       this.lights.ambientLight.color.setHex(night.ambientColor);
@@ -1032,24 +1126,25 @@ class Game {
       this.lights.fillLight.intensity = night.ambientIntensity * 0.5;
     }
 
-    // Lower exposure for horror atmosphere
+    // === EXPOSURE - Lower for horror atmosphere ===
     this.renderer.toneMappingExposure = 0.8;
 
-    // Enable strong vignette for horror effect using retro pass
+    // === POST-PROCESSING - Vignette effect ===
     if (this.postProcessing) {
       this.postProcessing.setRetroEnabled(true);
-      this.postProcessing.setVignetteIntensity(0.6); // Strong edge darkening
+      this.postProcessing.setVignetteIntensity(0.6);
     }
 
-    // Enable player torch light with theme-appropriate color (third-person)
+    // === PLAYER LIGHTS - ON ===
     this.character.setLightEnabled(true, {
       color: night.playerLightColor,
       intensity: night.playerLightIntensity,
       distance: night.playerLightDistance,
     });
-
-    // Create first-person light attached to camera
     this.createFirstPersonLight(night.playerLightColor, night.playerLightIntensity, night.playerLightDistance);
+
+    // === UPDATE UI ===
+    this.performancePanel?.setRetroState(true);
   }
 
   /**

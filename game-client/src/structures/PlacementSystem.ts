@@ -698,25 +698,6 @@ export class PlacementSystem {
   }
 
   /**
-   * Exit a render mode - performs complete cleanup
-   * Note: Currently unused as transitionRenderMode clears both groups,
-   * but kept for potential future selective cleanup needs.
-   */
-  private _exitRenderMode(mode: RenderMode): void {
-    switch (mode) {
-      case "instanced":
-        this.instancedMeshGroup.visible = false;
-        this.clearInstancedMeshes();
-        break;
-      case "greedy-full":
-      case "greedy-simple":
-        this.greedyMeshGroup.visible = false;
-        this.clearGreedyMeshes();
-        break;
-    }
-  }
-
-  /**
    * Enter a render mode - sets visibility and triggers rebuild
    */
   private enterRenderMode(mode: RenderMode): void {

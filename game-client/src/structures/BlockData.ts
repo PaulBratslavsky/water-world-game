@@ -19,6 +19,9 @@ export interface BlockMaterial {
   // Material type (default: "standard")
   type?: "standard" | "phong" | "basic" | "lambert";
 
+  // Color override (hex string like "#ff5500") - overrides block's base color
+  color?: string;
+
   // PBR properties (for standard material)
   roughness?: number; // 0-1, how rough the surface is (default: 0.7)
   metalness?: number; // 0-1, how metallic the surface is (default: 0)

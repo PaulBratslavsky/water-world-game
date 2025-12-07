@@ -197,13 +197,16 @@ export class PlacementSystem {
   ): string {
     const mat = blockMaterial || {};
 
+    // Use material color override if provided, otherwise use base color
+    const effectiveColor = mat.color ? hexToNumber(mat.color) : color;
+
     // In simple mode, only color matters (no transparency, no material properties)
     if (this.useSimpleMaterial && !isPreview) {
-      return "simple_" + color.toString(16);
+      return "simple_" + effectiveColor.toString(16);
     }
 
     return [
-      color.toString(16),
+      effectiveColor.toString(16),
       mat.type || "standard",
       mat.roughness ?? 0.7,
       mat.metalness ?? 0,
@@ -1191,6 +1194,9 @@ export class PlacementSystem {
   ): THREE.Material {
     const mat = blockMaterial || DEFAULT_MATERIAL;
 
+    // Use material color override if provided, otherwise use base color
+    const effectiveColor = mat.color ? hexToNumber(mat.color) : color;
+
     // Determine side rendering
     let side: THREE.Side = THREE.FrontSide;
     if (mat.side === "back") side = THREE.BackSide;
@@ -1204,7 +1210,7 @@ export class PlacementSystem {
     // Simple mode: just flat color, no lighting calculations at all
     if (this.useSimpleMaterial && !isPreview) {
       return new THREE.MeshBasicMaterial({
-        color,
+        color: effectiveColor,
       });
     }
 
@@ -1212,7 +1218,7 @@ export class PlacementSystem {
     switch (mat.type) {
       case "basic":
         return new THREE.MeshBasicMaterial({
-          color,
+          color: effectiveColor,
           transparent,
           opacity,
           wireframe: mat.wireframe ?? false,
@@ -1221,7 +1227,7 @@ export class PlacementSystem {
 
       case "lambert":
         return new THREE.MeshLambertMaterial({
-          color,
+          color: effectiveColor,
           transparent,
           opacity,
           wireframe: mat.wireframe ?? false,
@@ -1232,7 +1238,7 @@ export class PlacementSystem {
 
       case "phong":
         return new THREE.MeshPhongMaterial({
-          color,
+          color: effectiveColor,
           transparent,
           opacity,
           wireframe: mat.wireframe ?? false,
@@ -1245,7 +1251,7 @@ export class PlacementSystem {
       case "standard":
       default:
         return new THREE.MeshStandardMaterial({
-          color,
+          color: effectiveColor,
           transparent,
           opacity,
           wireframe: mat.wireframe ?? false,

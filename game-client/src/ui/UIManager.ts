@@ -915,6 +915,28 @@ export class UIManager {
       this.currentEditingMaterial.transparent = transparentCheckbox.checked;
       this.updateEditorPreview();
     });
+
+    // Color override
+    const colorOverrideEnabled = document.getElementById("block-color-override-enabled") as HTMLInputElement;
+    const colorOverrideInput = document.getElementById("block-color-override") as HTMLInputElement;
+    const colorOverrideValue = document.getElementById("block-color-override-value");
+
+    colorOverrideEnabled?.addEventListener("change", () => {
+      if (colorOverrideEnabled.checked) {
+        this.currentEditingMaterial.color = colorOverrideInput.value;
+      } else {
+        delete this.currentEditingMaterial.color;
+      }
+      this.updateEditorPreview();
+    });
+
+    colorOverrideInput?.addEventListener("input", () => {
+      if (colorOverrideEnabled?.checked) {
+        this.currentEditingMaterial.color = colorOverrideInput.value;
+        if (colorOverrideValue) colorOverrideValue.textContent = colorOverrideInput.value;
+        this.updateEditorPreview();
+      }
+    });
   }
 
   private updateEditorPreview(): void {
@@ -950,6 +972,7 @@ export class UIManager {
     // Get current material or defaults
     const material = block.material || {};
     this.currentEditingMaterial = {
+      color: material.color, // Color override (undefined means use block's base color)
       metalness: material.metalness ?? DEFAULT_MATERIAL.metalness ?? 0,
       roughness: material.roughness ?? DEFAULT_MATERIAL.roughness ?? 0.7,
       emissive: material.emissive || "#000000",
@@ -975,6 +998,19 @@ export class UIManager {
     const transparentCheckbox = document.getElementById("block-transparent") as HTMLInputElement;
     if (transparentCheckbox) transparentCheckbox.checked = this.currentEditingMaterial.transparent || false;
 
+    // Color override
+    const colorOverrideEnabled = document.getElementById("block-color-override-enabled") as HTMLInputElement;
+    const colorOverrideInput = document.getElementById("block-color-override") as HTMLInputElement;
+    const colorOverrideValue = document.getElementById("block-color-override-value");
+
+    // Check if material has a color override
+    const hasColorOverride = !!material.color;
+    if (colorOverrideEnabled) colorOverrideEnabled.checked = hasColorOverride;
+    // Use existing override color, or block's base color as default
+    const displayColor = material.color || block.color;
+    if (colorOverrideInput) colorOverrideInput.value = displayColor;
+    if (colorOverrideValue) colorOverrideValue.textContent = displayColor;
+
     // Update preview
     this.updateBlockPreview();
 
@@ -997,8 +1033,8 @@ export class UIManager {
     const block = getBlock(this.currentEditingBlockId);
     if (!block) return;
 
-    // Build CSS for preview
-    const baseColor = block.color;
+    // Build CSS for preview - use color override if set, otherwise use block's base color
+    const baseColor = this.currentEditingMaterial.color || block.color;
     const metalness = this.currentEditingMaterial.metalness || 0;
     const roughness = this.currentEditingMaterial.roughness || 0.7;
     const emissive = this.currentEditingMaterial.emissive || "#000000";
@@ -1100,6 +1136,14 @@ export class UIManager {
     const transparentCheckbox = document.getElementById("block-transparent") as HTMLInputElement;
     if (transparentCheckbox) transparentCheckbox.checked = false;
 
+    // Color override - start unchecked with neutral gray
+    const colorOverrideEnabled = document.getElementById("block-color-override-enabled") as HTMLInputElement;
+    const colorOverrideInput = document.getElementById("block-color-override") as HTMLInputElement;
+    const colorOverrideValue = document.getElementById("block-color-override-value");
+    if (colorOverrideEnabled) colorOverrideEnabled.checked = false;
+    if (colorOverrideInput) colorOverrideInput.value = "#808080";
+    if (colorOverrideValue) colorOverrideValue.textContent = "#808080";
+
     // Update preview with a neutral color
     this.updateSelectionPreview();
 
@@ -1117,8 +1161,8 @@ export class UIManager {
     const opacity = this.currentEditingMaterial.opacity || 1;
     const roughness = this.currentEditingMaterial.roughness || 0.7;
 
-    // Use a neutral gray for selection preview
-    const baseColor = "#808080";
+    // Use color override if set, otherwise neutral gray for selection preview
+    const baseColor = this.currentEditingMaterial.color || "#808080";
     let background = baseColor;
 
     if (metalness > 0.5) {

@@ -36,6 +36,7 @@ let currentWorldId: string | null = localStorage.getItem(WORLD_ID_KEY);
  * Material properties that can be saved per block
  */
 export interface SavedBlockMaterial {
+  color?: string;  // Color override (hex string like "#ff5500")
   metalness?: number;
   roughness?: number;
   emissive?: string;

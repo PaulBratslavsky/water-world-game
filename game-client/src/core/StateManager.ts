@@ -20,6 +20,12 @@ export type ViewMode = "third-person" | "first-person";
 
 export type RenderMode = "solid" | "wireframe";
 
+// Connection modes for online worlds
+// - "single-player": No world ID, local saves only
+// - "online": Connected to game server, can save to cloud
+// - "explorer": Has world ID but game server unavailable, read-only view
+export type ConnectionMode = "single-player" | "online" | "explorer";
+
 export interface GameState {
   cameraMode: CameraMode;
   previousCameraMode: CameraMode; // For returning from build mode
@@ -29,6 +35,7 @@ export interface GameState {
   selectionMode: boolean; // Selecting blocks for cut/copy/delete/prefab
   renderMode: RenderMode; // Solid or wireframe rendering
   showMaterials: boolean; // Show material properties or basic colors
+  connectionMode: ConnectionMode; // Single player, online, or explorer mode
   // Legacy fields for compatibility
   mode: GameMode;
   viewMode: ViewMode;
@@ -44,6 +51,7 @@ class StateManagerClass {
     selectionMode: false,
     renderMode: "solid",
     showMaterials: true,
+    connectionMode: "single-player",
     // Legacy fields
     mode: "move",
     viewMode: "third-person",
@@ -173,6 +181,30 @@ class StateManagerClass {
 
   isThirdPerson(): boolean {
     return this.state.cameraMode === "third-person";
+  }
+
+  getConnectionMode(): ConnectionMode {
+    return this.state.connectionMode;
+  }
+
+  isSinglePlayer(): boolean {
+    return this.state.connectionMode === "single-player";
+  }
+
+  isOnline(): boolean {
+    return this.state.connectionMode === "online";
+  }
+
+  isExplorerMode(): boolean {
+    return this.state.connectionMode === "explorer";
+  }
+
+  canSave(): boolean {
+    // Can save in all modes:
+    // - single-player: saves to personal localStorage
+    // - online: saves to cloud via game server
+    // - explorer: saves to temp localStorage (wiped on leave)
+    return true;
   }
 
   getState(): Readonly<GameState> {
@@ -331,6 +363,14 @@ class StateManagerClass {
 
   toggleShowMaterials(): void {
     this.setShowMaterials(!this.state.showMaterials);
+  }
+
+  setConnectionMode(connectionMode: ConnectionMode): void {
+    if (this.state.connectionMode === connectionMode) return;
+
+    const previous = this.state.connectionMode;
+    this.state.connectionMode = connectionMode;
+    emitEvent("state:connectionModeChanged", { connectionMode, previous });
   }
 }
 

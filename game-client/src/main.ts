@@ -44,6 +44,8 @@ import {
   SavedBlock,
   getWorldId,
   loadFromStrapi,
+  saveExplorerGame,
+  clearExplorerSave,
 } from "./core/SaveSystem";
 
 // Networking
@@ -364,11 +366,11 @@ class Game {
       this.initializeNetworking();
     });
 
-    // Handle world disconnection
-    onEvent("world:disconnected", async () => {
-      console.log("World deselected, clearing world...");
+    // Handle world disconnection (user clicked "Leave")
+    onEvent("world:disconnected", () => {
+      console.log("World deselected, switching to single player...");
 
-      // Mark as intentional so onDisconnected doesn't load from localStorage (we'll do it here)
+      // Mark as intentional so onDisconnected knows not to enter explorer mode
       this.intentionalDisconnect = true;
 
       // Disconnect from server when leaving world
@@ -377,6 +379,12 @@ class Game {
         this.networkManager.disconnect();
         this.isMultiplayer = false;
       }
+
+      // Clear explorer mode temp data (don't keep changes from cloud world)
+      clearExplorerSave();
+
+      // Switch to single player mode
+      stateManager.setConnectionMode("single-player");
 
       // Clear the world blocks
       console.log("Clearing all blocks");
@@ -389,12 +397,11 @@ class Game {
       }
       this.remotePlayers.clear();
 
-      // Load local data if it exists
-      console.log("Loading local data for offline mode");
-      await this.loadSavedGame();
+      // Load personal local saved game from localStorage
+      console.log("Loading personal local world for single player mode");
+      this.loadLocalGame();
 
-      this.updateSaveButtonState();
-      console.log("World cleared, now in offline mode");
+      console.log("World cleared, now in single player mode");
     });
 
     // Handle camera mode changes
@@ -1591,9 +1598,10 @@ class Game {
     const serverUrl = "ws://localhost:3001";
     const worldId = getWorldId();
 
-    // If no world ID, skip server connection and use offline mode
+    // If no world ID, skip server connection and use single player mode
     if (!worldId) {
       console.log("No world ID, entering single player mode");
+      stateManager.setConnectionMode("single-player");
       this.loadSavedGame();
       return;
     }
@@ -1606,6 +1614,7 @@ class Game {
         this.localPlayerId = playerId;
         this.isMultiplayer = true;
         console.log(`Connected as ${playerId}`);
+        stateManager.setConnectionMode("online");
         this.uiManager?.showMessage(`Multiplayer connected as ${playerId}`, 3000);
 
         // Update UI to reflect online status
@@ -1632,7 +1641,6 @@ class Game {
       },
 
       onDisconnected: async () => {
-        const wasMultiplayer = this.isMultiplayer;
         const wasIntentional = this.intentionalDisconnect;
         this.isMultiplayer = false;
         this.localPlayerId = null;
@@ -1645,22 +1653,26 @@ class Game {
         }
         this.remotePlayers.clear();
 
-        // If intentional disconnect (user clicked Leave), don't load anything
+        // If intentional disconnect (user clicked Leave), switch to single player
         if (wasIntentional) {
-          console.log("Intentional disconnect, not loading fallback data");
+          console.log("Intentional disconnect, switching to single player mode");
+          stateManager.setConnectionMode("single-player");
           return;
         }
 
-        // If initial connection failed (never was multiplayer), fall back to singleplayer mode
-        if (!wasMultiplayer) {
-          // Load from Strapi (if world ID exists) or localStorage
-          console.log("Multiplayer server unavailable, continuing in single player mode");
-          this.uiManager?.showSinglePlayerMode();
-          this.uiManager?.showMessage("Game server unavailable - playing in single player mode", 4000);
+        // Check if we have a world ID - if so, enter explorer mode (read-only)
+        const worldId = getWorldId();
+        if (worldId) {
+          // Has world ID but server unavailable - enter Explorer Mode (read-only)
+          console.log("Game server unavailable, entering Explorer Mode (read-only)");
+          stateManager.setConnectionMode("explorer");
+          this.uiManager?.showMessage("Explorer Mode - Changes will be lost on refresh", 5000);
           await this.loadSavedGame();
         } else {
-          this.uiManager?.showSinglePlayerMode();
-          this.uiManager?.showMessage("Disconnected from server - switched to single player", 3000);
+          // No world ID - pure single player mode
+          console.log("No world ID, entering single player mode");
+          stateManager.setConnectionMode("single-player");
+          await this.loadSavedGame();
         }
       },
 
@@ -1860,18 +1872,31 @@ class Game {
 
   private async saveCurrentGame(): Promise<void> {
     const blocks = this.placementSystem.exportBlocks() as SavedBlock[];
-    console.log(`Saving ${blocks.length} blocks, isMultiplayer=${this.isMultiplayer}`);
+    const connectionMode = stateManager.getConnectionMode();
+    console.log(`Saving ${blocks.length} blocks, mode=${connectionMode}, isMultiplayer=${this.isMultiplayer}`);
 
-    // If connected to server, request server to save to Strapi
-    if (this.isMultiplayer && this.networkManager) {
+    if (connectionMode === "online" && this.isMultiplayer && this.networkManager) {
+      // Online mode: request server to save to Strapi
       console.log("Requesting server to save...");
       this.uiManager?.showMessage("Saving to cloud...", 1000);
       this.networkManager.sendWorldSave();
       return;
     }
 
-    // Offline mode: save to localStorage
-    console.log("Offline mode, saving to localStorage");
+    if (connectionMode === "explorer") {
+      // Explorer mode: save to temp localStorage (will be wiped on leave)
+      console.log("Explorer mode, saving to temp storage");
+      const success = saveExplorerGame(blocks);
+      if (success) {
+        this.uiManager?.showMessage(`Saved ${blocks.length} blocks (temporary)`, 2000);
+      } else {
+        this.uiManager?.showMessage("Failed to save", 2000);
+      }
+      return;
+    }
+
+    // Single player mode: save to personal localStorage
+    console.log("Single player mode, saving to localStorage");
     const success = saveGame(blocks);
     if (success) {
       this.uiManager?.showMessage(`Saved ${blocks.length} blocks locally`, 2000);
@@ -1882,29 +1907,43 @@ class Game {
 
   private async loadSavedGame(): Promise<void> {
     // When connected to multiplayer, server sends world state via onWorldState callback
-    // For single player mode with a world ID, try to load from Strapi first
+    // For explorer mode (has world ID but no server), try to load from Strapi first
     const worldId = getWorldId();
 
     if (worldId) {
-      // Has a world ID - try to load from Strapi (single player with cloud sync)
-      console.log(`Single player mode with world ID ${worldId} - loading from Strapi...`);
+      // Has a world ID - try to load from Strapi (explorer mode)
+      console.log(`Explorer mode with world ID ${worldId} - loading from Strapi...`);
       const saveData = await loadFromStrapi();
       if (saveData && saveData.blocks.length > 0) {
+        // Clear existing blocks before loading cloud world
+        this.placementSystem.clearAll();
+
         const count = this.placementSystem.importBlocks(saveData.blocks);
         console.log(`Loaded ${count} blocks from Strapi`);
-        this.uiManager?.showMessage(`Single player: Loaded ${count} blocks from cloud`, 3000);
+
+        // Save initial copy to explorer temp storage
+        saveExplorerGame(saveData.blocks);
+
+        this.uiManager?.showMessage(`Explorer Mode: Loaded ${count} blocks from cloud`, 3000);
         this.updateSaveButtonState();
         return;
       }
     }
 
-    // No world ID or Strapi load failed - try localStorage
+    // No world ID or Strapi load failed - load from localStorage
+    this.loadLocalGame();
+  }
+
+  /**
+   * Load game from localStorage only (used for single player mode)
+   */
+  private loadLocalGame(): void {
     if (hasSave()) {
       const saveData = loadGame();
       if (saveData && saveData.blocks.length > 0) {
         const count = this.placementSystem.importBlocks(saveData.blocks);
         console.log(`Loaded ${count} blocks from localStorage`);
-        this.uiManager?.showMessage(`Single player: Loaded ${count} blocks from local storage`, 3000);
+        this.uiManager?.showMessage(`Loaded ${count} blocks from local storage`, 3000);
       } else {
         this.uiManager?.showMessage("Single player: No saved data", 2000);
       }
@@ -2048,12 +2087,14 @@ async function bootstrap(): Promise<void> {
   const worldId = getWorldId();
 
   if (worldId) {
-    // Online mode: Load blocks and prefabs from Strapi
-    console.log("Online mode: Loading blocks and prefabs from Strapi...");
+    // Has world ID - load blocks and prefabs from Strapi
+    // Connection mode (online vs explorer) will be determined when NetworkManager connects/fails
+    console.log("World ID found: Loading blocks and prefabs from Strapi...");
     await Promise.all([loadStructuresFromStrapi(), loadPrefabsFromAPI()]);
   } else {
     // Single player mode: Use local defaults
     console.log("Single player mode: Using local block and prefab defaults");
+    stateManager.setConnectionMode("single-player");
     rebuildStructuresFromDefaults();
     rebuildPrefabsFromDefaults();
   }

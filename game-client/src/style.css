@@ -198,6 +198,23 @@ canvas {
   border: 1px solid rgba(160, 160, 200, 0.3);
 }
 
+.world-status.explorer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(180, 100, 30, 0.9);
+  color: #ffe0b0;
+  border: 1px solid rgba(255, 180, 100, 0.4);
+}
+
+.world-status.online {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(45, 138, 78, 0.9);
+  color: white;
+}
+
 .world-status.connected {
   display: flex;
   align-items: center;

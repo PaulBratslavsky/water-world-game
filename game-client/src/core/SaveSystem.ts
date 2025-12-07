@@ -9,7 +9,8 @@ import { emitEvent } from "./EventBus";
 
 // Save data format version (increment when format changes)
 const SAVE_VERSION = 1;
-const SAVE_KEY = "voxel_game_save";
+const LOCAL_SAVE_KEY = "voxel_game_save_local";       // Your personal local world (single player) - permanent
+const EXPLORER_SAVE_KEY = "voxel_game_save_explorer"; // Temp copy of Strapi world (explorer mode) - wiped on leave
 const WORLD_ID_KEY = "voxel_game_world_id";
 
 // Strapi configuration
@@ -114,7 +115,7 @@ export function saveGame(blocks: SavedBlock[]): boolean {
       blocks: blocks,
     };
 
-    localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+    localStorage.setItem(LOCAL_SAVE_KEY, JSON.stringify(saveData));
 
     emitEvent("game:saved", { blockCount: blocks.length, timestamp: saveData.timestamp });
 
@@ -130,7 +131,7 @@ export function saveGame(blocks: SavedBlock[]): boolean {
  */
 export function loadGame(): SaveData | null {
   try {
-    const saved = localStorage.getItem(SAVE_KEY);
+    const saved = localStorage.getItem(LOCAL_SAVE_KEY);
     if (!saved) {
       return null;
     }
@@ -156,7 +157,7 @@ export function loadGame(): SaveData | null {
  * Check if a save exists
  */
 export function hasSave(): boolean {
-  return localStorage.getItem(SAVE_KEY) !== null;
+  return localStorage.getItem(LOCAL_SAVE_KEY) !== null;
 }
 
 /**
@@ -164,7 +165,7 @@ export function hasSave(): boolean {
  */
 export function deleteSave(): boolean {
   try {
-    localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(LOCAL_SAVE_KEY);
     emitEvent("game:reset", undefined);
     return true;
   } catch (error) {
@@ -173,12 +174,70 @@ export function deleteSave(): boolean {
   }
 }
 
+// ============================================
+// Explorer Mode Temporary Storage
+// ============================================
+
+/**
+ * Save explorer mode temp data (temporary, wiped on leave)
+ */
+export function saveExplorerGame(blocks: SavedBlock[]): boolean {
+  try {
+    const saveData: SaveData = {
+      version: SAVE_VERSION,
+      timestamp: new Date().toISOString(),
+      blocks: blocks,
+    };
+
+    localStorage.setItem(EXPLORER_SAVE_KEY, JSON.stringify(saveData));
+    console.log(`Explorer mode: Saved ${blocks.length} blocks to temp storage`);
+    return true;
+  } catch (error) {
+    console.error("Failed to save explorer game:", error);
+    return false;
+  }
+}
+
+/**
+ * Load explorer mode temp data
+ */
+export function loadExplorerGame(): SaveData | null {
+  try {
+    const saved = localStorage.getItem(EXPLORER_SAVE_KEY);
+    if (!saved) {
+      return null;
+    }
+
+    const saveData: SaveData = JSON.parse(saved);
+    console.log(`Explorer mode: Loaded ${saveData.blocks.length} blocks from temp storage`);
+    return saveData;
+  } catch (error) {
+    console.error("Failed to load explorer game:", error);
+    return null;
+  }
+}
+
+/**
+ * Check if explorer temp save exists
+ */
+export function hasExplorerSave(): boolean {
+  return localStorage.getItem(EXPLORER_SAVE_KEY) !== null;
+}
+
+/**
+ * Clear explorer mode temp data (called when leaving explorer mode)
+ */
+export function clearExplorerSave(): void {
+  localStorage.removeItem(EXPLORER_SAVE_KEY);
+  console.log("Explorer mode: Cleared temp storage");
+}
+
 /**
  * Get save info without loading full data
  */
 export function getSaveInfo(): { exists: boolean; timestamp?: string; blockCount?: number } {
   try {
-    const saved = localStorage.getItem(SAVE_KEY);
+    const saved = localStorage.getItem(LOCAL_SAVE_KEY);
     if (!saved) {
       return { exists: false };
     }
@@ -261,8 +320,9 @@ export async function saveToStrapi(blocks: SavedBlock[]): Promise<boolean> {
       return false;
     }
 
-    // Also save locally as cache
-    localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+    // NOTE: Do NOT cache to LOCAL_SAVE_KEY here!
+    // LOCAL_SAVE_KEY is the user's personal single-player world and should never be overwritten
+    // by cloud data. Explorer mode uses EXPLORER_SAVE_KEY for temporary storage.
 
     emitEvent("game:saved", { blockCount: blocks.length, timestamp: saveData.timestamp });
 
@@ -297,8 +357,9 @@ export async function loadFromStrapi(): Promise<SaveData | null> {
     const result: StrapiSaveResponse = await response.json();
     const saveData = result.data.data;
 
-    // Cache to localStorage
-    localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+    // NOTE: Do NOT cache to LOCAL_SAVE_KEY here!
+    // LOCAL_SAVE_KEY is the user's personal single-player world and should never be overwritten
+    // by cloud data. Explorer mode uses EXPLORER_SAVE_KEY for temporary storage.
 
     emitEvent("game:loaded", { blockCount: saveData.blocks.length, timestamp: saveData.timestamp });
 

@@ -1,5 +1,5 @@
 import { onEvent, emitEvent } from "../core/EventBus";
-import { stateManager, GameMode, ViewMode } from "../core/StateManager";
+import { stateManager, GameMode, ViewMode, ConnectionMode } from "../core/StateManager";
 import { getAllStructures, StructureDefinition } from "../structures/StructureDefinition";
 import { getAllPrefabs, PrefabDefinition, refreshPrefabs } from "../structures/PrefabDefinition";
 import { savePrefabToStrapi, savePrefabLocally, generatePrefabId, PrefabCategory, PrefabBlockData } from "../structures/PrefabData";
@@ -77,28 +77,30 @@ export class UIManager {
   }
 
   /**
-   * Check if we have a saved world ID and restore connection status
+   * Check if we have a saved world ID on startup
+   * Note: This only validates the world exists in Strapi.
+   * The actual connection mode (online vs explorer) is determined by
+   * NetworkManager when it tries to connect to the game server.
    */
   private async checkExistingWorldConnection(): Promise<void> {
     const savedWorldId = getWorldId();
     if (!savedWorldId) {
-      this.updateWorldStatus("offline", "Single Player");
+      // No world ID - single player mode (already set by bootstrap)
       return;
     }
 
-    // Validate the saved world ID still exists
+    // Validate the saved world ID still exists in Strapi
     console.log("Checking saved world ID:", savedWorldId);
     const worldInfo = await validateWorldId();
 
-    if (worldInfo) {
-      console.log("Reconnected to saved world:", worldInfo);
-      this.updateWorldStatus("connected", worldInfo);
-      emitEvent("world:connected", { worldId: savedWorldId });
-    } else {
+    if (!worldInfo) {
+      // World no longer exists in Strapi - clear and go to single player
       console.log("Saved world ID is no longer valid, clearing");
       clearWorldId();
       this.updateWorldStatus("offline", "Single Player");
     }
+    // If world is valid, don't set status here - wait for NetworkManager
+    // to determine if we're online (server connected) or explorer (server unavailable)
   }
 
   private setupModeToggle(): void {
@@ -283,11 +285,12 @@ export class UIManager {
 
     if (worldInfo) {
       this.hideJoinWorldModal();
-      this.updateWorldStatus("connected", worldInfo);
+      // Don't set status here - wait for NetworkManager to determine online vs explorer
+      // The world:connected event will trigger initializeNetworking which sets the mode
       console.log("Emitting world:connected event");
       emitEvent("world:connected", { worldId });
     } else {
-      this.updateWorldStatus("error", "Failed to connect. Try again later.");
+      this.updateWorldStatus("error", "World not found in cloud.");
       clearWorldId(); // Clear invalid world ID
       if (connectBtn) {
         connectBtn.disabled = false;
@@ -605,7 +608,64 @@ export class UIManager {
       this.updateMaterialsUI(show);
     });
 
+    onEvent("state:connectionModeChanged", ({ connectionMode }) => {
+      this.updateConnectionModeUI(connectionMode);
+    });
+
     // Capture mode also uses the same level display via structure:levelChanged event
+  }
+
+  private async updateConnectionModeUI(connectionMode: ConnectionMode): Promise<void> {
+    // Update save button state based on connection mode
+    const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
+    if (saveBtn) {
+      if (connectionMode === "explorer") {
+        saveBtn.disabled = false;
+        saveBtn.title = "Save temporarily (will be lost when leaving)";
+        saveBtn.textContent = "⏳ Save";
+      } else if (connectionMode === "online") {
+        saveBtn.disabled = false;
+        saveBtn.title = "Save to cloud";
+        saveBtn.textContent = "☁️ Save";
+      } else {
+        saveBtn.disabled = false;
+        saveBtn.title = "Save locally";
+        saveBtn.textContent = "💾 Save";
+      }
+    }
+
+    // Update world status display based on connection mode
+    const statusEl = document.getElementById("world-status");
+    const joinBtn = document.getElementById("join-world-btn");
+
+    if (statusEl) {
+      // Clear all status classes
+      statusEl.classList.remove("connected", "error", "offline", "explorer", "online");
+
+      if (connectionMode === "single-player") {
+        statusEl.classList.add("offline");
+        statusEl.innerHTML = `🎮 Single Player`;
+        statusEl.style.display = "flex";
+        if (joinBtn) joinBtn.style.display = "block";
+      } else if (connectionMode === "explorer") {
+        statusEl.classList.add("explorer");
+        statusEl.innerHTML = `👁️ Explorer <button id="leave-world-btn" class="leave-btn">Leave</button>`;
+        statusEl.style.display = "flex";
+        if (joinBtn) joinBtn.style.display = "none";
+        // Wire up leave button
+        document.getElementById("leave-world-btn")?.addEventListener("click", () => this.leaveWorld());
+      } else if (connectionMode === "online") {
+        // Get world info to show the name
+        const worldInfo = await validateWorldId();
+        const worldName = worldInfo?.name || "Online World";
+        statusEl.classList.add("online");
+        statusEl.innerHTML = `☁️ ${worldName} <button id="leave-world-btn" class="leave-btn">Leave</button>`;
+        statusEl.style.display = "flex";
+        if (joinBtn) joinBtn.style.display = "none";
+        // Wire up leave button
+        document.getElementById("leave-world-btn")?.addEventListener("click", () => this.leaveWorld());
+      }
+    }
   }
 
   private updateBuildLevelUI(level: number): void {

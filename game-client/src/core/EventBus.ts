@@ -88,6 +88,7 @@ export interface GameEvents {
   "state:prefabCaptureChanged": { active: boolean }; // Legacy alias for selectionModeChanged
   "state:renderModeChanged": { renderMode: "solid" | "wireframe" };
   "state:showMaterialsChanged": { show: boolean };
+  "state:connectionModeChanged": { connectionMode: "single-player" | "online" | "explorer"; previous: "single-player" | "online" | "explorer" };
 
   // Selection events (replaces prefab capture events)
   "selection:complete": {

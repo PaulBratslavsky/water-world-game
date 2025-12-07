@@ -401,7 +401,10 @@ export class UIManager {
     if (descInput) descInput.value = "";
     if (categorySelect) categorySelect.value = "user-created";
     if (blockCountSpan) blockCountSpan.textContent = `${blockCount} blocks selected`;
-    if (saveBtn) saveBtn.disabled = true;
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Save Prefab";
+    }
 
     this.prefabModal.classList.add("visible");
 
@@ -418,9 +421,16 @@ export class UIManager {
     const nameInput = document.getElementById("prefab-name") as HTMLInputElement;
     const descInput = document.getElementById("prefab-description") as HTMLInputElement;
     const categorySelect = document.getElementById("prefab-category") as HTMLSelectElement;
+    const saveBtn = document.getElementById("prefab-save-btn") as HTMLButtonElement;
 
     const name = nameInput?.value.trim();
     if (!name) return;
+
+    // Disable button immediately to prevent multiple clicks
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+    }
 
     // Get blocks from capture system
     if (this.getSelectedBlocks) {

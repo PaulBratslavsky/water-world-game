@@ -98,6 +98,7 @@ class Game {
   // Paste mode state (similar to prefab placement)
   private isPasteMode = false;
   private pastePreview: THREE.Group | null = null;
+  private pasteRotation = 0; // 0, 1, 2, 3 = 0°, 90°, 180°, 270°
 
   // Drag-to-place state for blocks
   private isDraggingToPlace = false;
@@ -254,6 +255,8 @@ class Game {
           this.placementSystem.rotatePreview();
         } else if (this.currentPrefab) {
           this.rotatePrefabPreview();
+        } else if (this.isPasteMode) {
+          this.rotatePastePreview();
         }
       }
 
@@ -1641,8 +1644,9 @@ class Game {
     if (!clipboard || clipboard.blocks.length === 0) return;
 
     this.isPasteMode = true;
+    this.pasteRotation = 0; // Reset rotation when entering paste mode
     this.createPastePreview();
-    console.log("Entered paste mode - click to place, Escape to cancel");
+    console.log("Entered paste mode - click to place, R to rotate, Escape to cancel");
   }
 
   private exitPasteMode(): void {
@@ -1670,6 +1674,16 @@ class Game {
     // Remove existing preview
     if (this.pastePreview) {
       this.scene.remove(this.pastePreview);
+      this.pastePreview.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m) => m.dispose());
+          } else {
+            child.material.dispose();
+          }
+        }
+      });
     }
 
     this.pastePreview = new THREE.Group();
@@ -1694,16 +1708,49 @@ class Game {
       });
 
       const mesh = new THREE.Mesh(geometry, material);
+
+      // Apply rotation to block position
+      const rotated = this.rotateBlockPosition(block.x, block.z, this.pasteRotation);
+
       mesh.position.set(
-        block.x * cellSize + cellSize / 2,
+        rotated.x * cellSize + cellSize / 2,
         block.y * cellSize + cellSize / 2,
-        block.z * cellSize + cellSize / 2
+        rotated.z * cellSize + cellSize / 2
       );
 
       this.pastePreview.add(mesh);
     }
 
     this.scene.add(this.pastePreview);
+  }
+
+  private rotatePastePreview(): void {
+    if (!this.isPasteMode) return;
+
+    // Increment rotation
+    this.pasteRotation = (this.pasteRotation + 1) % 4;
+
+    // Recreate preview with new rotation
+    this.createPastePreview();
+
+    // Reposition at current mouse location
+    const cellSize = this.chunkManager.getCellSize();
+    const gridX = Math.floor(this.lastMouseWorldX / cellSize);
+    const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
+    this.updatePastePreview(gridX, gridZ);
+  }
+
+  /**
+   * Rotate a block position around origin by rotation steps (0-3 = 0°, 90°, 180°, 270°)
+   */
+  private rotateBlockPosition(x: number, z: number, rotation: number): { x: number; z: number } {
+    switch (rotation % 4) {
+      case 0: return { x, z };           // 0°
+      case 1: return { x: -z, z: x };    // 90° clockwise
+      case 2: return { x: -x, z: -z };   // 180°
+      case 3: return { x: z, z: -x };    // 270° clockwise
+      default: return { x, z };
+    }
   }
 
   private updatePastePreview(gridX: number, gridZ: number): void {
@@ -1726,9 +1773,12 @@ class Game {
     // Place each block from clipboard at offset from cursor position
     let placedCount = 0;
     for (const block of clipboard.blocks) {
-      const x = gridX + block.x;
+      // Apply rotation to block position
+      const rotated = this.rotateBlockPosition(block.x, block.z, this.pasteRotation);
+
+      const x = gridX + rotated.x;
       const y = gridY + block.y;
-      const z = gridZ + block.z;
+      const z = gridZ + rotated.z;
 
       // Place the block
       const structure = getStructure(block.blockId);
@@ -1741,7 +1791,7 @@ class Game {
       }
     }
 
-    console.log(`Pasted ${placedCount} blocks at (${gridX}, ${gridY}, ${gridZ})`);
+    console.log(`Pasted ${placedCount} blocks at (${gridX}, ${gridY}, ${gridZ}) with rotation ${this.pasteRotation * 90}°`);
     return placedCount > 0;
   }
 

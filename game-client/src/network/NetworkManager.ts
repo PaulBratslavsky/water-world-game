@@ -43,7 +43,7 @@ export class NetworkManager {
   private playerId: string | null = null;
   private playerColor: string | null = null;
   private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 5;
+  private maxReconnectAttempts: number = 3;  // Reduced from 5 to fail faster to single player
   private reconnectDelay: number = 2000;
 
   // Input state to send to server

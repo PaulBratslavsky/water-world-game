@@ -74,6 +74,11 @@ export async function loadStructuresFromStrapi(
   rebuildStructures();
 }
 
+// Rebuild structures from default block data (for single player mode)
+export function rebuildStructuresFromDefaults(): void {
+  rebuildStructures();
+}
+
 // Get all structure definitions as array
 export function getAllStructures(): StructureDefinition[] {
   return Object.values(STRUCTURES);

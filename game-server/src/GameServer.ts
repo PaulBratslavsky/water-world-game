@@ -8,6 +8,7 @@
  * - Broadcasting state to all clients
  */
 
+import "dotenv/config";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   ServerMessage,
@@ -35,8 +36,20 @@ const TICK_INTERVAL = 1000 / TICK_RATE;
 
 // Strapi configuration
 const STRAPI_URL = process.env.STRAPI_URL || "http://localhost:1337";
+const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN || "";
 const STRAPI_SAVE_ENDPOINT = `${STRAPI_URL}/api/saves`;
 const SAVE_INTERVAL = 10000; // Auto-save every 10 seconds
+
+// Helper to get auth headers for Strapi
+function getStrapiHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+  if (STRAPI_API_TOKEN) {
+    headers["Authorization"] = `Bearer ${STRAPI_API_TOKEN}`;
+  }
+  return headers;
+}
 
 // Strapi response types
 interface SaveData {
@@ -117,7 +130,9 @@ class GameServer {
     }
 
     try {
-      const response = await fetch(`${STRAPI_SAVE_ENDPOINT}/${worldId}`);
+      const response = await fetch(`${STRAPI_SAVE_ENDPOINT}/${worldId}`, {
+        headers: getStrapiHeaders(),
+      });
 
       if (!response.ok) {
         console.log(`World ${worldId} not found in Strapi (status: ${response.status})`);
@@ -188,7 +203,7 @@ class GameServer {
         `${STRAPI_SAVE_ENDPOINT}/${this.strapiDocumentId}`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: getStrapiHeaders(),
           body: JSON.stringify({ data: { data: saveData } }),
         }
       );

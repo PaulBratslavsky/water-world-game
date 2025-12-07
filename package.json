@@ -1,0 +1,27 @@
+{
+  "name": "three-js-multiplayer",
+  "version": "1.0.0",
+  "description": "Three.js multiplayer game with WebSocket server and Strapi CMS",
+  "scripts": {
+    "dev": "concurrently -n client,server,strapi -c blue,green,magenta \"npm run dev:client\" \"npm run dev:server\" \"npm run dev:strapi\"",
+    "dev:client": "npm --prefix game-client run dev",
+    "dev:server": "npm --prefix game-server run dev",
+    "dev:strapi": "npm --prefix game-data-server run develop",
+    "install:all": "npm install && npm --prefix game-client install && npm --prefix game-server install && npm --prefix game-data-server install"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PaulBratslavsky/water-world-game.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/PaulBratslavsky/water-world-game/issues"
+  },
+  "homepage": "https://github.com/PaulBratslavsky/water-world-game#readme",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

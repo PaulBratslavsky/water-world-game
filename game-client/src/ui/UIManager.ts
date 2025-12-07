@@ -82,7 +82,7 @@ export class UIManager {
   private async checkExistingWorldConnection(): Promise<void> {
     const savedWorldId = getWorldId();
     if (!savedWorldId) {
-      this.updateWorldStatus("offline", "Offline Mode");
+      this.updateWorldStatus("offline", "Single Player");
       return;
     }
 
@@ -97,7 +97,7 @@ export class UIManager {
     } else {
       console.log("Saved world ID is no longer valid, clearing");
       clearWorldId();
-      this.updateWorldStatus("offline", "Offline Mode");
+      this.updateWorldStatus("offline", "Single Player");
     }
   }
 
@@ -316,7 +316,7 @@ export class UIManager {
     if (status === "connected" && typeof info === "object") {
       // Show world name and version (e.g., "My World v1.0")
       const displayName = `${info.name} v${info.version}`;
-      statusEl.innerHTML = `${displayName} <button id="leave-world-btn" class="leave-btn">Leave</button>`;
+      statusEl.innerHTML = `☁️ ${displayName} <button id="leave-world-btn" class="leave-btn">Leave</button>`;
       statusEl.style.display = "flex";
 
       // Hide join button when connected
@@ -325,8 +325,13 @@ export class UIManager {
       // Wire up leave button
       const leaveBtn = document.getElementById("leave-world-btn");
       leaveBtn?.addEventListener("click", () => this.leaveWorld());
+    } else if (status === "offline") {
+      // Single player mode - show with icon
+      statusEl.innerHTML = `🎮 Single Player`;
+      statusEl.style.display = "flex";
+      if (joinBtn) joinBtn.style.display = "block";
     } else {
-      // Error or offline status - info is a string message
+      // Error status - info is a string message
       statusEl.textContent = (typeof info === "string" ? info : null) || status;
       statusEl.style.display = "block";
       if (joinBtn) joinBtn.style.display = "block";
@@ -335,9 +340,9 @@ export class UIManager {
 
   private leaveWorld(): void {
     clearWorldId();
-    this.updateWorldStatus("offline", "Offline Mode");
+    this.updateWorldStatus("offline", "Single Player");
     emitEvent("world:disconnected", undefined);
-    this.showMessage("Disconnected from world", 2000);
+    this.showMessage("Switched to single player", 2000);
   }
 
   private showPrefabModal(blockCount: number): void {
@@ -422,7 +427,7 @@ export class UIManager {
     stateManager.setPrefabCaptureMode(false);
   }
 
-  private refreshPrefabMenu(): void {
+  public refreshPrefabMenu(): void {
     if (!this.prefabMenuContainer) return;
 
     // Clear existing prefabs (keep title)
@@ -461,6 +466,35 @@ export class UIManager {
 
     const structures = getAllStructures();
 
+    structures.forEach((structure) => {
+      const button = this.createStructureButton(structure);
+      grid.appendChild(button);
+    });
+  }
+
+  public refreshBlockMenu(): void {
+    if (!this.structureMenuContainer) return;
+
+    // Clear existing blocks (keep title)
+    const title = this.structureMenuContainer.querySelector(".menu-title");
+    this.structureMenuContainer.innerHTML = "";
+
+    if (title) {
+      this.structureMenuContainer.appendChild(title);
+    } else {
+      const newTitle = document.createElement("div");
+      newTitle.className = "menu-title";
+      newTitle.textContent = "Blocks";
+      this.structureMenuContainer.appendChild(newTitle);
+    }
+
+    // Add grid container for blocks
+    const grid = document.createElement("div");
+    grid.className = "menu-grid";
+    this.structureMenuContainer.appendChild(grid);
+
+    // Re-add blocks
+    const structures = getAllStructures();
     structures.forEach((structure) => {
       const button = this.createStructureButton(structure);
       grid.appendChild(button);
@@ -654,6 +688,13 @@ export class UIManager {
     document.querySelectorAll(".structure-btn").forEach((btn) => {
       btn.classList.remove("selected");
     });
+  }
+
+  /**
+   * Update to show single player mode (called when server connection fails)
+   */
+  showSinglePlayerMode(): void {
+    this.updateWorldStatus("offline", "Single Player");
   }
 
   /**

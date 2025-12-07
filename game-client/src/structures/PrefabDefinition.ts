@@ -78,6 +78,11 @@ export function refreshPrefabs(): void {
   rebuildPrefabs();
 }
 
+// Rebuild prefabs from default data (for single player mode)
+export function rebuildPrefabsFromDefaults(): void {
+  rebuildPrefabs();
+}
+
 // Get all prefab definitions as array
 export function getAllPrefabs(): PrefabDefinition[] {
   return Object.values(PREFABS);

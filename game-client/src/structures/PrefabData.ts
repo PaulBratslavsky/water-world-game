@@ -79,8 +79,21 @@ interface StrapiSingleResponse<T> {
 let prefabData: PrefabData[] = [];
 let prefabsLoaded = false;
 
-// Default API URL
-const DEFAULT_API_URL = "http://localhost:1337/api/prefabs";
+// Strapi configuration from environment
+const STRAPI_URL = import.meta.env.VITE_STRAPI_URL || "http://localhost:1337";
+const STRAPI_API_TOKEN = import.meta.env.VITE_STRAPI_API_TOKEN || "";
+const DEFAULT_API_URL = `${STRAPI_URL}/api/prefabs`;
+
+// Helper to get auth headers for Strapi
+function getStrapiHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+  if (STRAPI_API_TOKEN) {
+    headers["Authorization"] = `Bearer ${STRAPI_API_TOKEN}`;
+  }
+  return headers;
+}
 
 // ============================================
 // PREFAB GENERATORS (for default prefabs)
@@ -222,7 +235,10 @@ export async function loadPrefabsFromStrapi(
   apiUrl: string = DEFAULT_API_URL
 ): Promise<PrefabData[]> {
   try {
-    const response = await fetch(apiUrl);
+    console.log(`Loading prefabs from: ${apiUrl}`);
+    const response = await fetch(apiUrl, {
+      headers: getStrapiHeaders(),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch prefabs: ${response.status}`);
@@ -278,9 +294,7 @@ export async function savePrefabToStrapi(
     };
     const response = await fetch(apiUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: getStrapiHeaders(),
       body: JSON.stringify(payload),
     });
 

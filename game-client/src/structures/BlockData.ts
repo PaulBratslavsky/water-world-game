@@ -372,12 +372,30 @@ export function hexToNumber(hex: string): number {
   return parseInt(hex.replace("#", ""), 16);
 }
 
+// Strapi configuration from environment
+const STRAPI_URL = import.meta.env.VITE_STRAPI_URL || "http://localhost:1337";
+const STRAPI_API_TOKEN = import.meta.env.VITE_STRAPI_API_TOKEN || "";
+
+// Helper to get auth headers for Strapi
+function getStrapiHeaders(): HeadersInit {
+  const headers: HeadersInit = {};
+  if (STRAPI_API_TOKEN) {
+    headers["Authorization"] = `Bearer ${STRAPI_API_TOKEN}`;
+  }
+  return headers;
+}
+
 // Load blocks from Strapi API
 export async function loadBlocksFromStrapi(
-  apiUrl: string = "http://localhost:1337/api/blocks"
+  apiUrl?: string
 ): Promise<BlockData[]> {
+  const url = apiUrl || `${STRAPI_URL}/api/blocks`;
+
   try {
-    const response = await fetch(apiUrl);
+    console.log(`Loading blocks from: ${url}`);
+    const response = await fetch(url, {
+      headers: getStrapiHeaders(),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch blocks: ${response.status}`);
@@ -398,7 +416,7 @@ export async function loadBlocksFromStrapi(
       sortOrder: strapiBlock.sortOrder,
       isActive: strapiBlock.isActive,
       material: strapiBlock.material, // Include material properties from Strapi
-      metadata: strapiBlock.metadata,
+      metadata: strapiBlock.metadata || {},
     }));
 
     // Replace default block data with fetched data

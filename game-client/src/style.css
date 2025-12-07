@@ -190,9 +190,12 @@ canvas {
 }
 
 .world-status.offline {
-  display: block;
-  background: rgba(100, 100, 100, 0.8);
-  color: #ccc;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(74, 74, 106, 0.9);
+  color: #b8b8ff;
+  border: 1px solid rgba(160, 160, 200, 0.3);
 }
 
 .world-status.connected {
@@ -309,6 +312,16 @@ canvas {
   font-size: 12px;
   font-weight: bold;
   margin-left: 8px;
+}
+
+.build-level-hint {
+  padding: 6px 10px;
+  color: #888;
+  font-size: 11px;
+  font-family: monospace;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  margin-left: 4px;
 }
 
 /* Structure menu (blocks) - left side */

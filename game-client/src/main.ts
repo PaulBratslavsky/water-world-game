@@ -20,10 +20,12 @@ import { PlacementSystem } from "./structures/PlacementSystem";
 import {
   getStructure,
   loadStructuresFromStrapi,
+  rebuildStructuresFromDefaults,
 } from "./structures/StructureDefinition";
 import {
   getPrefab,
   loadPrefabsFromAPI,
+  rebuildPrefabsFromDefaults,
   PrefabDefinition,
 } from "./structures/PrefabDefinition";
 import { PrefabCaptureSystem, getClipboard, hasClipboard } from "./structures/PrefabCaptureSystem";
@@ -41,6 +43,7 @@ import {
   hasSave,
   SavedBlock,
   getWorldId,
+  loadFromStrapi,
 } from "./core/SaveSystem";
 
 // Networking
@@ -343,9 +346,16 @@ class Game {
 
     // Handle world connection (from Join World modal)
     // Reconnect to server with new world ID
-    onEvent("world:connected", ({ worldId }) => {
-      console.log(`World selected: ${worldId}, reconnecting to server...`);
+    onEvent("world:connected", async ({ worldId }) => {
+      console.log(`World selected: ${worldId}, loading from Strapi...`);
       this.updateSaveButtonState();
+
+      // Load blocks and prefabs from Strapi for online mode
+      await Promise.all([loadStructuresFromStrapi(), loadPrefabsFromAPI()]);
+
+      // Refresh UI with new blocks/prefabs
+      this.uiManager?.refreshBlockMenu();
+      this.uiManager?.refreshPrefabMenu();
 
       // Disconnect and reconnect with new world ID
       if (this.networkManager) {
@@ -355,7 +365,7 @@ class Game {
     });
 
     // Handle world disconnection
-    onEvent("world:disconnected", () => {
+    onEvent("world:disconnected", async () => {
       console.log("World deselected, clearing world...");
 
       // Mark as intentional so onDisconnected doesn't load from localStorage (we'll do it here)
@@ -381,7 +391,7 @@ class Game {
 
       // Load local data if it exists
       console.log("Loading local data for offline mode");
-      this.loadSavedGame();
+      await this.loadSavedGame();
 
       this.updateSaveButtonState();
       console.log("World cleared, now in offline mode");
@@ -1583,7 +1593,7 @@ class Game {
 
     // If no world ID, skip server connection and use offline mode
     if (!worldId) {
-      console.log("No world ID, entering offline mode");
+      console.log("No world ID, entering single player mode");
       this.loadSavedGame();
       return;
     }
@@ -1621,7 +1631,7 @@ class Game {
         this.placementSystem.clearAll();
       },
 
-      onDisconnected: () => {
+      onDisconnected: async () => {
         const wasMultiplayer = this.isMultiplayer;
         const wasIntentional = this.intentionalDisconnect;
         this.isMultiplayer = false;
@@ -1643,11 +1653,14 @@ class Game {
 
         // If initial connection failed (never was multiplayer), fall back to singleplayer mode
         if (!wasMultiplayer) {
-          // Load from localStorage
-          console.log("Game server unavailable, entering singleplayer mode");
-          this.loadSavedGame();
+          // Load from Strapi (if world ID exists) or localStorage
+          console.log("Multiplayer server unavailable, continuing in single player mode");
+          this.uiManager?.showSinglePlayerMode();
+          this.uiManager?.showMessage("Game server unavailable - playing in single player mode", 4000);
+          await this.loadSavedGame();
         } else {
-          this.uiManager?.showMessage("Disconnected from server", 3000);
+          this.uiManager?.showSinglePlayerMode();
+          this.uiManager?.showMessage("Disconnected from server - switched to single player", 3000);
         }
       },
 
@@ -1867,20 +1880,36 @@ class Game {
     }
   }
 
-  private loadSavedGame(): void {
+  private async loadSavedGame(): Promise<void> {
     // When connected to multiplayer, server sends world state via onWorldState callback
-    // This function is only for offline mode - load from localStorage
+    // For single player mode with a world ID, try to load from Strapi first
+    const worldId = getWorldId();
+
+    if (worldId) {
+      // Has a world ID - try to load from Strapi (single player with cloud sync)
+      console.log(`Single player mode with world ID ${worldId} - loading from Strapi...`);
+      const saveData = await loadFromStrapi();
+      if (saveData && saveData.blocks.length > 0) {
+        const count = this.placementSystem.importBlocks(saveData.blocks);
+        console.log(`Loaded ${count} blocks from Strapi`);
+        this.uiManager?.showMessage(`Single player: Loaded ${count} blocks from cloud`, 3000);
+        this.updateSaveButtonState();
+        return;
+      }
+    }
+
+    // No world ID or Strapi load failed - try localStorage
     if (hasSave()) {
       const saveData = loadGame();
       if (saveData && saveData.blocks.length > 0) {
         const count = this.placementSystem.importBlocks(saveData.blocks);
         console.log(`Loaded ${count} blocks from localStorage`);
-        this.uiManager?.showMessage(`Offline mode: Loaded ${count} blocks from local storage`, 3000);
+        this.uiManager?.showMessage(`Single player: Loaded ${count} blocks from local storage`, 3000);
       } else {
-        this.uiManager?.showMessage("Offline mode: No saved data", 2000);
+        this.uiManager?.showMessage("Single player: No saved data", 2000);
       }
     } else {
-      this.uiManager?.showMessage("Offline mode: No saved data", 2000);
+      this.uiManager?.showMessage("Single player: No saved data", 2000);
     }
     this.updateSaveButtonState();
   }
@@ -2014,11 +2043,20 @@ class Game {
   };
 }
 
-// Bootstrap - load data from Strapi then start game
+// Bootstrap - load data and start game
 async function bootstrap(): Promise<void> {
-  // Load structures and prefabs from Strapi in parallel
-  // Both fall back to defaults if API is unavailable
-  await Promise.all([loadStructuresFromStrapi(), loadPrefabsFromAPI()]);
+  const worldId = getWorldId();
+
+  if (worldId) {
+    // Online mode: Load blocks and prefabs from Strapi
+    console.log("Online mode: Loading blocks and prefabs from Strapi...");
+    await Promise.all([loadStructuresFromStrapi(), loadPrefabsFromAPI()]);
+  } else {
+    // Single player mode: Use local defaults
+    console.log("Single player mode: Using local block and prefab defaults");
+    rebuildStructuresFromDefaults();
+    rebuildPrefabsFromDefaults();
+  }
 
   const game = new Game();
   await game.initialize();

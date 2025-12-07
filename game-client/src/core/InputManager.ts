@@ -125,6 +125,7 @@ export class InputManager {
   private onKeyDown = (event: KeyboardEvent): void => {
     // Ignore input when typing in form fields or modal is open
     if (this.isInputFocused()) return;
+    if (!event.key) return;
 
     const key = event.key.toLowerCase();
 
@@ -141,6 +142,8 @@ export class InputManager {
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {
+    if (!event.key) return;
+
     const key = event.key.toLowerCase();
     this.keysPressed.delete(key);
 

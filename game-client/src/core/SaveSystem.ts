@@ -13,8 +13,20 @@ const SAVE_KEY = "voxel_game_save";
 const WORLD_ID_KEY = "voxel_game_world_id";
 
 // Strapi configuration
-const STRAPI_URL = "http://localhost:1337";
+const STRAPI_URL = import.meta.env.VITE_STRAPI_URL || "http://localhost:1337";
+const STRAPI_API_TOKEN = import.meta.env.VITE_STRAPI_API_TOKEN || "";
 const STRAPI_SAVE_ENDPOINT = `${STRAPI_URL}/api/saves`;
+
+// Helper to get auth headers for Strapi
+function getStrapiHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+  if (STRAPI_API_TOKEN) {
+    headers["Authorization"] = `Bearer ${STRAPI_API_TOKEN}`;
+  }
+  return headers;
+}
 
 // Current world ID (Strapi documentId)
 let currentWorldId: string | null = localStorage.getItem(WORLD_ID_KEY);
@@ -239,9 +251,7 @@ export async function saveToStrapi(blocks: SavedBlock[]): Promise<boolean> {
 
     const response = await fetch(url, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: getStrapiHeaders(),
       body: body,
     });
 
@@ -275,7 +285,9 @@ export async function loadFromStrapi(): Promise<SaveData | null> {
   }
 
   try {
-    const response = await fetch(`${STRAPI_SAVE_ENDPOINT}/${currentWorldId}`);
+    const response = await fetch(`${STRAPI_SAVE_ENDPOINT}/${currentWorldId}`, {
+      headers: getStrapiHeaders(),
+    });
 
     if (!response.ok) {
       console.warn(`Failed to load world ${currentWorldId}, falling back to localStorage`);
@@ -308,7 +320,9 @@ export async function validateWorldId(): Promise<WorldInfo | null> {
   }
 
   try {
-    const response = await fetch(`${STRAPI_SAVE_ENDPOINT}/${currentWorldId}`);
+    const response = await fetch(`${STRAPI_SAVE_ENDPOINT}/${currentWorldId}`, {
+      headers: getStrapiHeaders(),
+    });
     if (!response.ok) {
       return null;
     }
@@ -333,7 +347,10 @@ export async function validateWorldId(): Promise<WorldInfo | null> {
  */
 export async function isStrapiAvailable(): Promise<boolean> {
   try {
-    const response = await fetch(STRAPI_SAVE_ENDPOINT, { method: "HEAD" });
+    const response = await fetch(STRAPI_SAVE_ENDPOINT, {
+      method: "HEAD",
+      headers: getStrapiHeaders(),
+    });
     return response.ok;
   } catch {
     return false;

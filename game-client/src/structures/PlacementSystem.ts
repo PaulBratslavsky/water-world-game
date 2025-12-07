@@ -1682,6 +1682,15 @@ export class PlacementSystem {
 
     this.placedStructures.delete(structureId);
 
+    // Force immediate rebuild based on current render mode
+    if (this.currentRenderMode === "instanced") {
+      this.rebuildInstancedMeshesNow();
+    } else {
+      // greedy-full or greedy-simple
+      this.rebuildGreedyMeshes();
+      this.greedyMeshDirty = false;
+    }
+
     // Emit event
     emitEvent("structure:removed", { id: structureId, gridX, gridZ });
 
@@ -2409,18 +2418,15 @@ export class PlacementSystem {
    */
   clearAll(): void {
     // Clear instanced meshes
-    if (this.useInstancing) {
-      for (const mesh of this.instancedMeshes.values()) {
-        this.instancedMeshGroup.remove(mesh);
-        mesh.geometry.dispose();
-      }
-      this.instancedMeshes.clear();
-      this.blockInstances.clear();
-    }
+    this.clearInstancedMeshes();
+    this.blockInstances.clear();
 
-    // Remove all individual meshes from scene (non-instanced mode)
-    if (!this.useInstancing) {
-      for (const structure of this.placedStructures.values()) {
+    // Clear greedy meshes
+    this.clearGreedyMeshes();
+
+    // Remove all individual meshes from scene (non-instanced mode structures)
+    for (const structure of this.placedStructures.values()) {
+      if (structure.mesh.parent === this.scene) {
         this.scene.remove(structure.mesh);
         structure.mesh.traverse((child) => {
           if (child instanceof THREE.Mesh) {

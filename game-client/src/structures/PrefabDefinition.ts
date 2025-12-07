@@ -26,8 +26,13 @@ export interface PrefabDefinition {
   blocks: PrefabBlock[];
 }
 
-// Get the color for a prefab block (resolves blockId to color)
+// Get the color for a prefab block (checks block's material.color override first, then blockId)
 export function getPrefabBlockColor(block: PrefabBlock): number {
+  // Check for color override in block's material first
+  if (block.material?.color) {
+    return hexToNumber(block.material.color);
+  }
+  // Fall back to block definition color
   const blockData = getBlock(block.blockId);
   if (blockData) {
     return hexToNumber(blockData.color);
@@ -36,10 +41,16 @@ export function getPrefabBlockColor(block: PrefabBlock): number {
   return 0x808080;
 }
 
-// Get the material for a prefab block (resolves blockId to material)
+// Get the material for a prefab block (merges block's material override with base material)
 export function getPrefabBlockMaterial(block: PrefabBlock): BlockMaterial | undefined {
   const blockData = getBlock(block.blockId);
-  return blockData?.material;
+  const baseMaterial = blockData?.material;
+
+  // If block has material override, merge with base material (override takes precedence)
+  if (block.material) {
+    return { ...baseMaterial, ...block.material };
+  }
+  return baseMaterial;
 }
 
 // Convert PrefabData (Strapi format) to PrefabDefinition (internal format)

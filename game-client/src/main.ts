@@ -355,8 +355,18 @@ class Game {
 
     // Initialize capture system level when entering capture mode
     onEvent("state:prefabCaptureChanged", ({ active }) => {
-      if (active && this.prefabCaptureSystem) {
-        this.prefabCaptureSystem.setLevel(this.sharedBuildLevel);
+      if (active) {
+        // Exit paste mode when entering selection mode to avoid conflicts
+        if (this.isPasteMode) {
+          this.exitPasteMode();
+        }
+        // Cancel any prefab placement
+        if (this.currentPrefab) {
+          this.cancelPrefabPlacement();
+        }
+        if (this.prefabCaptureSystem) {
+          this.prefabCaptureSystem.setLevel(this.sharedBuildLevel);
+        }
       }
     });
 
@@ -1085,6 +1095,14 @@ class Game {
         this.postProcessing.setRetroEnabled(true);
       }
     }
+
+    // === RESET BRIGHTNESS TO DEFAULT ===
+    // Clear any cached base intensities (will be recalculated from current preset values)
+    if (this.lights) {
+      (this.lights as any)._baseIntensities = null;
+    }
+    // Reset brightness slider to 1.0
+    this.performancePanel?.setBrightness(1.0);
 
     // === UPDATE UI ===
     this.performancePanel?.setRetroState(preset.retro.enabled);

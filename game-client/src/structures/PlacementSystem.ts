@@ -994,14 +994,11 @@ export class PlacementSystem {
   private renderModeBeforeBuildMode: RenderMode | null = null;
 
   /**
-   * Set blocks below the specified level to wireframe mode.
-   * Blocks at or above the level render normally (solid).
-   * Pass null to restore all blocks to solid.
+   * Set build mode with a specific level.
+   * All blocks render as normal solid blocks regardless of level.
+   * Pass null to exit build mode.
    *
-   * Performance: Creates separate instanced meshes for wireframe vs solid,
-   * only rebuilds when entering/exiting build mode (not on level change).
-   * Note: Wireframe only works in instanced mode, so we temporarily switch
-   * to instanced mode when entering build mode.
+   * Note: Uses instanced mode for build mode visualization.
    */
   setGrayscaleBelowLevel(level: number | null): void {
     const previousLevel = this.dimOverlay?.userData?.level as number | null | undefined;
@@ -1051,9 +1048,10 @@ export class PlacementSystem {
   }
 
   /**
-   * Rebuild instanced meshes with separate solid/wireframe versions
+   * Rebuild instanced meshes for build mode
+   * All blocks render as solid (no wireframe), regardless of level
    */
-  private rebuildWithWireframeSupport(wireframeBelowLevel: number | null): void {
+  private rebuildWithWireframeSupport(_buildLevel: number | null): void {
     // Clear existing instanced meshes
     for (const mesh of this.instancedMeshes.values()) {
       this.instancedMeshGroup.remove(mesh);
@@ -1061,124 +1059,17 @@ export class PlacementSystem {
     }
     this.instancedMeshes.clear();
 
-    if (wireframeBelowLevel === null) {
-      // Normal mode - just rebuild standard meshes
-      this.rebuildInstancedMeshes();
-      return;
-    }
-
-    // Build mode - create two sets of meshes per material: solid (at/above level) and wireframe (below)
-    const geometry = this.getCachedGeometry(
-      this.cellSize * 0.95,
-      1,
-      this.cellSize * 0.95
-    );
-
-    // Group blocks by material AND by whether they're above/below the level
-    const solidGroups = new Map<string, BlockInstance[]>();
-    const wireframeGroups = new Map<string, BlockInstance[]>();
-
-    for (const instance of this.blockInstances.values()) {
-      if (instance.gridY >= wireframeBelowLevel) {
-        const group = solidGroups.get(instance.materialKey) || [];
-        group.push(instance);
-        solidGroups.set(instance.materialKey, group);
-      } else {
-        const group = wireframeGroups.get(instance.materialKey) || [];
-        group.push(instance);
-        wireframeGroups.set(instance.materialKey, group);
-      }
-    }
-
-    const matrix = new THREE.Matrix4();
-
-    // Create solid meshes
-    for (const [materialKey, instances] of solidGroups) {
-      const material = this.materialCache.get(materialKey);
-      if (!material) continue;
-
-      const instancedMesh = new THREE.InstancedMesh(geometry, material, instances.length);
-
-      for (let i = 0; i < instances.length; i++) {
-        const inst = instances[i];
-        matrix.setPosition(
-          inst.gridX * this.cellSize + this.cellSize / 2,
-          inst.gridY + 0.5,
-          inst.gridZ * this.cellSize + this.cellSize / 2
-        );
-        instancedMesh.setMatrixAt(i, matrix);
-      }
-
-      instancedMesh.instanceMatrix.needsUpdate = true;
-      instancedMesh.frustumCulled = true;
-      instancedMesh.userData.isSolid = true;
-      instancedMesh.userData.level = wireframeBelowLevel;
-
-      this.instancedMeshes.set(materialKey + "_solid", instancedMesh);
-      this.instancedMeshGroup.add(instancedMesh);
-    }
-
-    // Create wireframe meshes
-    for (const [materialKey, instances] of wireframeGroups) {
-      const wireframeMaterial = this.getWireframeMaterial(materialKey);
-
-      const instancedMesh = new THREE.InstancedMesh(geometry, wireframeMaterial, instances.length);
-
-      for (let i = 0; i < instances.length; i++) {
-        const inst = instances[i];
-        matrix.setPosition(
-          inst.gridX * this.cellSize + this.cellSize / 2,
-          inst.gridY + 0.5,
-          inst.gridZ * this.cellSize + this.cellSize / 2
-        );
-        instancedMesh.setMatrixAt(i, matrix);
-      }
-
-      instancedMesh.instanceMatrix.needsUpdate = true;
-      instancedMesh.frustumCulled = true;
-      instancedMesh.userData.isSolid = false;
-      instancedMesh.userData.level = wireframeBelowLevel;
-
-      this.instancedMeshes.set(materialKey + "_wireframe", instancedMesh);
-      this.instancedMeshGroup.add(instancedMesh);
-    }
+    // Build mode or normal mode - render all blocks as solid
+    // No special wireframe treatment for blocks below build level
+    this.rebuildInstancedMeshes();
   }
 
   /**
-   * Update wireframe visibility when level changes (without full rebuild)
+   * Update visibility when level changes
+   * No longer needs rebuild since all blocks render as solid
    */
-  private updateWireframeVisibility(newLevel: number): void {
-    // Need to rebuild since blocks move between solid/wireframe groups
-    this.rebuildWithWireframeSupport(newLevel);
-  }
-
-  /**
-   * Get or create a wireframe version of a material
-   */
-  private getWireframeMaterial(originalMaterialKey: string): THREE.Material {
-    const wireframeKey = originalMaterialKey + "_wireframe";
-
-    let material = this.materialCache.get(wireframeKey);
-    if (!material) {
-      const originalMaterial = this.materialCache.get(originalMaterialKey);
-      if (originalMaterial && originalMaterial instanceof THREE.MeshStandardMaterial) {
-        material = new THREE.MeshBasicMaterial({
-          color: originalMaterial.color,
-          wireframe: true,
-          transparent: true,
-          opacity: 0.4,
-        });
-      } else {
-        material = new THREE.MeshBasicMaterial({
-          color: 0x888888,
-          wireframe: true,
-          transparent: true,
-          opacity: 0.4,
-        });
-      }
-      this.materialCache.set(wireframeKey, material);
-    }
-    return material;
+  private updateWireframeVisibility(_newLevel: number): void {
+    // No rebuild needed - all blocks render as solid regardless of level
   }
 
   /**

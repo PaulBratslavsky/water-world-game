@@ -2201,6 +2201,15 @@ export class PlacementSystem {
       }
     }
 
+    // Force immediate rebuild based on current render mode
+    if (this.currentRenderMode === "instanced") {
+      this.rebuildInstancedMeshesNow();
+    } else {
+      // greedy-full or greedy-simple
+      this.rebuildGreedyMeshes();
+      this.greedyMeshDirty = false;
+    }
+
     // Emit event
     emitEvent("structure:placed", {
       id: `prefab_${prefab.id}_${Date.now()}`,

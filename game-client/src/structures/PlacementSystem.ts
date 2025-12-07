@@ -1271,6 +1271,17 @@ export class PlacementSystem {
     return this.heightMap.get(key) || 0;
   }
 
+  // Get block info at a specific grid position
+  getBlockAt(gridX: number, gridY: number, gridZ: number): { blockId: string; material: BlockMaterial } | null {
+    const key = cellKey3D(gridX, gridY, gridZ);
+    const instance = this.blockInstances.get(key);
+    if (!instance) return null;
+    return {
+      blockId: instance.blockId,
+      material: instance.blockMaterial || {},
+    };
+  }
+
   // Update the height map when placing/removing blocks
   private updateHeightAt(gridX: number, gridZ: number, height: number): void {
     const key = `${gridX},${gridZ}`;
@@ -2301,13 +2312,15 @@ export class PlacementSystem {
   /**
    * Place a single block from network (multiplayer sync)
    * Similar to importBlocks but for individual real-time placement
+   * @param materialOverride Optional material override (e.g., from clipboard with color override)
    */
   placeBlockFromNetwork(
     x: number,
     y: number,
     z: number,
     blockId: string,
-    _rotation: number = 0
+    _rotation: number = 0,
+    materialOverride?: BlockMaterial
   ): boolean {
     const structure = getStructure(blockId);
     if (!structure) {
@@ -2330,11 +2343,16 @@ export class PlacementSystem {
     const currentHeight = this.heightMap.get(heightKey) || 0;
     this.heightMap.set(heightKey, Math.max(currentHeight, y + 1));
 
+    // Merge structure material with override (override takes precedence)
+    const effectiveMaterial = materialOverride
+      ? { ...structure.material, ...materialOverride }
+      : structure.material;
+
     let mesh: THREE.Group;
 
     if (this.useInstancing) {
       // Add to instanced rendering
-      this.getCachedMaterial(structure.color, structure.material, false);
+      this.getCachedMaterial(structure.color, effectiveMaterial, false);
       this.addBlockInstance(
         key,
         blockId,
@@ -2342,7 +2360,7 @@ export class PlacementSystem {
         y,
         z,
         structure.color,
-        structure.material
+        effectiveMaterial
       );
       mesh = new THREE.Group(); // Empty placeholder
     } else {

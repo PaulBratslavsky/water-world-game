@@ -15,12 +15,24 @@ export enum PrefabCategory {
   Furniture = "furniture",
 }
 
+// Block material override (optional, for custom colors etc.)
+export interface PrefabBlockMaterial {
+  color?: string;
+  metalness?: number;
+  roughness?: number;
+  emissive?: string;
+  emissiveIntensity?: number;
+  opacity?: number;
+  transparent?: boolean;
+}
+
 // Block position within a prefab
 export interface PrefabBlockData {
   x: number;
   y: number;
   z: number;
   blockId: string;
+  material?: PrefabBlockMaterial;
 }
 
 // Prefab definition matching Strapi schema

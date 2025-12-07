@@ -1697,9 +1697,12 @@ class Game {
         cellSize * 0.95
       );
 
-      // Get block color from structure definition
+      // Get block color - use material color override if present, otherwise structure color
       const structure = getStructure(block.blockId);
-      const color = structure?.color || 0x888888;
+      let color: number | string = structure?.color || 0x888888;
+      if (block.material?.color) {
+        color = block.material.color; // Use color override (hex string)
+      }
 
       const material = new THREE.MeshBasicMaterial({
         color,
@@ -1780,10 +1783,10 @@ class Game {
       const y = gridY + block.y;
       const z = gridZ + rotated.z;
 
-      // Place the block
+      // Place the block with material override if present (for color overrides)
       const structure = getStructure(block.blockId);
       if (structure) {
-        const placed = this.placementSystem.placeBlockFromNetwork(x, y, z, block.blockId, 0);
+        const placed = this.placementSystem.placeBlockFromNetwork(x, y, z, block.blockId, 0, block.material);
         if (placed) {
           this.sendBlockPlacedToServer(x, y, z, block.blockId);
           placedCount++;
@@ -1880,6 +1883,12 @@ class Game {
       this.placementSystem.updateLevelPlaneAt(gridX, gridZ, level);
     });
 
+    // Connect capture system to get block materials for copy/paste
+    this.prefabCaptureSystem.setBlockMaterialGetter((x, y, z) => {
+      const blockInfo = this.placementSystem.getBlockAt(x, y, z);
+      return blockInfo?.material || null;
+    });
+
     // Setup save/load buttons first (before UI manager which may trigger world:connected)
     this.setupSaveControls();
 
@@ -1887,6 +1896,29 @@ class Game {
     // UIManager will check for saved world ID and emit world:connected if valid
     this.uiManager = new UIManager();
     this.uiManager.setBlockGetter(() => this.prefabCaptureSystem?.getSelectedBlocks() || []);
+
+    // Connect first block material getter for pre-filling the selection editor
+    this.uiManager.setFirstBlockMaterialGetter(() => {
+      const firstBlockId = this.prefabCaptureSystem?.getFirstBlockId();
+      if (!firstBlockId) return null;
+
+      // Get the selection bounds to find the first block's position
+      const bounds = this.prefabCaptureSystem?.getSelectionBounds();
+      if (!bounds) return null;
+
+      // Find the first block with this ID in the selection
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
+            const blockInfo = this.placementSystem.getBlockAt(x, y, z);
+            if (blockInfo) {
+              return blockInfo;
+            }
+          }
+        }
+      }
+      return null;
+    });
 
     // Initialize performance panel
     this.performancePanel = new PerformancePanel();

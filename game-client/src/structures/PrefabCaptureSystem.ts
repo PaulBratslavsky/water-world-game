@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { onEvent, emitEvent } from "../core/EventBus";
 import { stateManager } from "../core/StateManager";
-import { PrefabBlockData } from "./PrefabData";
+import { PrefabBlockData, PrefabBlockMaterial } from "./PrefabData";
 
 /**
  * PrefabCaptureSystem - Handles selecting placed blocks for various actions
@@ -70,6 +70,9 @@ export class PrefabCaptureSystem {
   // Callback to update level plane and camera (set by main.ts)
   private onLevelChanged: ((level: number) => void) | null = null;
 
+  // Callback to get block material at a position (set by main.ts)
+  private getBlockMaterialAt: ((x: number, y: number, z: number) => PrefabBlockMaterial | null) | null = null;
+
   constructor(
     scene: THREE.Scene,
     cellSize: number,
@@ -89,6 +92,13 @@ export class PrefabCaptureSystem {
    */
   setOnLevelChanged(callback: (level: number) => void): void {
     this.onLevelChanged = callback;
+  }
+
+  /**
+   * Set callback to get block material at a position
+   */
+  setBlockMaterialGetter(callback: (x: number, y: number, z: number) => PrefabBlockMaterial | null): void {
+    this.getBlockMaterialAt = callback;
   }
 
   private setupEventListeners(): void {
@@ -390,7 +400,7 @@ export class PrefabCaptureSystem {
     let minFoundZ = Infinity;
 
     // First pass: find all blocks and track the minimum coordinates
-    const foundBlocks: Array<{ x: number; y: number; z: number; blockId: string }> = [];
+    const foundBlocks: Array<{ x: number; y: number; z: number; blockId: string; material?: PrefabBlockMaterial }> = [];
 
     for (let x = bounds.minX; x <= bounds.maxX; x++) {
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -399,7 +409,9 @@ export class PrefabCaptureSystem {
           if (this.occupiedCells.has(key)) {
             const blockId = this.getBlockIdAt(x, y, z);
             if (blockId) {
-              foundBlocks.push({ x, y, z, blockId });
+              // Get material if callback is set
+              const material = this.getBlockMaterialAt?.(x, y, z) || undefined;
+              foundBlocks.push({ x, y, z, blockId, material });
               minFoundX = Math.min(minFoundX, x);
               minFoundY = Math.min(minFoundY, y);
               minFoundZ = Math.min(minFoundZ, z);
@@ -416,12 +428,17 @@ export class PrefabCaptureSystem {
 
     // Second pass: normalize coordinates relative to the actual min block positions
     for (const block of foundBlocks) {
-      blocks.push({
+      const blockData: PrefabBlockData = {
         x: block.x - minFoundX,
         y: block.y - minFoundY,
         z: block.z - minFoundZ,
         blockId: block.blockId,
-      });
+      };
+      // Only include material if it has properties (to keep JSON clean)
+      if (block.material && Object.keys(block.material).length > 0) {
+        blockData.material = block.material;
+      }
+      blocks.push(blockData);
     }
 
     return blocks;
@@ -504,6 +521,18 @@ export class PrefabCaptureSystem {
   // Check if there's an active selection (both corners set)
   hasSelection(): boolean {
     return this.firstCorner !== null && this.secondCorner !== null;
+  }
+
+  // Get the first block in selection (at the starting corner)
+  getFirstBlockId(): string | null {
+    if (!this.firstCorner) return null;
+
+    // Check if there's a block at the first corner position
+    const x = Math.floor(this.firstCorner.x);
+    const y = this.currentLevel;
+    const z = Math.floor(this.firstCorner.z);
+
+    return this.getBlockIdAt(x, y, z);
   }
 
   // Keep selection visuals visible (don't clear them yet)

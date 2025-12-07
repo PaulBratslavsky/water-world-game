@@ -64,6 +64,13 @@ export class UIManager {
     this.getSelectedBlocks = getter;
   }
 
+  // Callback to get the first block's material info for prefilling editor
+  private getFirstBlockMaterial: (() => { blockId: string; material: BlockMaterial } | null) | null = null;
+
+  setFirstBlockMaterialGetter(getter: () => { blockId: string; material: BlockMaterial } | null): void {
+    this.getFirstBlockMaterial = getter;
+  }
+
   // Set selection action callbacks
   setSelectionCallbacks(callbacks: {
     onCut: () => void;
@@ -1109,14 +1116,20 @@ export class UIManager {
     this.isEditingSelection = true;
     this.currentEditingBlockId = null;
 
-    // Start with default material values
+    // Try to get the first block's material to pre-fill the editor
+    const firstBlockInfo = this.getFirstBlockMaterial?.();
+    const firstBlock = firstBlockInfo ? getBlock(firstBlockInfo.blockId) : null;
+    const firstMaterial = firstBlockInfo?.material || {};
+
+    // Use first block's material values, or defaults if none
     this.currentEditingMaterial = {
-      metalness: 0,
-      roughness: 0.7,
-      emissive: "#000000",
-      emissiveIntensity: 0,
-      opacity: 1,
-      transparent: false,
+      color: firstMaterial.color,
+      metalness: firstMaterial.metalness ?? DEFAULT_MATERIAL.metalness ?? 0,
+      roughness: firstMaterial.roughness ?? DEFAULT_MATERIAL.roughness ?? 0.7,
+      emissive: firstMaterial.emissive || "#000000",
+      emissiveIntensity: firstMaterial.emissiveIntensity ?? 0,
+      opacity: firstMaterial.opacity ?? DEFAULT_MATERIAL.opacity ?? 1,
+      transparent: firstMaterial.transparent ?? DEFAULT_MATERIAL.transparent ?? false,
     };
 
     // Update UI
@@ -1130,21 +1143,23 @@ export class UIManager {
 
     const emissiveColorInput = document.getElementById("block-emissive-color") as HTMLInputElement;
     const emissiveColorValue = document.getElementById("block-emissive-color-value");
-    if (emissiveColorInput) emissiveColorInput.value = "#000000";
-    if (emissiveColorValue) emissiveColorValue.textContent = "#000000";
+    if (emissiveColorInput) emissiveColorInput.value = this.currentEditingMaterial.emissive || "#000000";
+    if (emissiveColorValue) emissiveColorValue.textContent = this.currentEditingMaterial.emissive || "#000000";
 
     const transparentCheckbox = document.getElementById("block-transparent") as HTMLInputElement;
-    if (transparentCheckbox) transparentCheckbox.checked = false;
+    if (transparentCheckbox) transparentCheckbox.checked = this.currentEditingMaterial.transparent || false;
 
-    // Color override - start unchecked with neutral gray
+    // Color override - use first block's color if it has one, otherwise use base color
     const colorOverrideEnabled = document.getElementById("block-color-override-enabled") as HTMLInputElement;
     const colorOverrideInput = document.getElementById("block-color-override") as HTMLInputElement;
     const colorOverrideValue = document.getElementById("block-color-override-value");
-    if (colorOverrideEnabled) colorOverrideEnabled.checked = false;
-    if (colorOverrideInput) colorOverrideInput.value = "#808080";
-    if (colorOverrideValue) colorOverrideValue.textContent = "#808080";
+    const hasColorOverride = !!firstMaterial.color;
+    const displayColor = firstMaterial.color || firstBlock?.color || "#808080";
+    if (colorOverrideEnabled) colorOverrideEnabled.checked = hasColorOverride;
+    if (colorOverrideInput) colorOverrideInput.value = displayColor;
+    if (colorOverrideValue) colorOverrideValue.textContent = displayColor;
 
-    // Update preview with a neutral color
+    // Update preview
     this.updateSelectionPreview();
 
     // Show modal

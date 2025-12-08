@@ -2230,7 +2230,8 @@ class Game {
             block.y,
             block.z,
             block.structureId,
-            block.rotation
+            block.rotation,
+            block.material
           );
         }
       },
@@ -2258,7 +2259,8 @@ class Game {
             block.y,
             block.z,
             block.structureId,
-            block.rotation
+            block.rotation,
+            block.material
           );
         }
 

@@ -51,11 +51,22 @@ function getStrapiHeaders(): HeadersInit {
   return headers;
 }
 
+// Block material type (matches NetworkBlockMaterial)
+interface SavedBlockMaterial {
+  color?: string;
+  metalness?: number;
+  roughness?: number;
+  emissive?: string;
+  emissiveIntensity?: number;
+  opacity?: number;
+  transparent?: boolean;
+}
+
 // Strapi response types
 interface SaveData {
   version: number;
   timestamp: string;
-  blocks: Array<{ blockId: string; x: number; y: number; z: number }>;
+  blocks: Array<{ blockId: string; x: number; y: number; z: number; material?: SavedBlockMaterial }>;
 }
 
 interface StrapiSaveResponse {
@@ -115,7 +126,19 @@ class GameServer {
     this.startAutoSave();
     console.log(`Game server running on ws://localhost:${PORT}`);
     console.log(`Strapi URL: ${STRAPI_URL}`);
+
+    // Test Strapi connection at startup
+    await this.testStrapiConnection();
+
     console.log("Waiting for client to specify world ID...");
+  }
+
+  private async testStrapiConnection(): Promise<void> {
+    // Skip pre-flight test - we'll verify access when client joins with worldId
+    // The list endpoint (/api/saves) requires 'find' permission which may not be granted
+    // Individual world access (/api/saves/{id}) only requires 'findOne'
+    console.log(`Strapi configured: ${STRAPI_URL}`);
+    console.log(`API Token: ${STRAPI_API_TOKEN ? "configured" : "NOT SET"}`);
   }
 
   /**
@@ -124,9 +147,10 @@ class GameServer {
    */
   private async loadWorldById(worldId: string): Promise<boolean> {
     // If same world is already loaded, skip reload
-    if (this.strapiDocumentId === worldId) {
-      console.log(`World ${worldId} already loaded`);
-      return true;
+    // TODO: Remove this bypass after debugging materials
+    if (this.strapiDocumentId === worldId && this.blocks.size > 0) {
+      // Force reload to pick up material changes - remove this later
+      console.log(`World ${worldId} - forcing fresh reload from Strapi`);
     }
 
     try {
@@ -156,11 +180,15 @@ class GameServer {
             z: block.z,
             structureId: block.blockId,
             rotation: 0,
+            material: block.material,
           });
         }
       }
 
+      // Debug: log a sample block to verify material is being loaded
+      const sampleBlock = Array.from(this.blocks.values())[0];
       console.log(`Loaded world ${worldId}: ${this.blocks.size} blocks`);
+      console.log(`Sample block:`, JSON.stringify(sampleBlock));
       return true;
     } catch (e) {
       console.error(`Failed to load world ${worldId} from Strapi:`, e);
@@ -191,6 +219,7 @@ class GameServer {
         x: b.x,
         y: b.y,
         z: b.z,
+        material: b.material,
       }));
 
       const saveData: SaveData = {

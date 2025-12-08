@@ -123,12 +123,23 @@ export interface PlayerInputs {
   cameraYaw: number;
 }
 
+export interface NetworkBlockMaterial {
+  color?: string;
+  metalness?: number;
+  roughness?: number;
+  emissive?: string;
+  emissiveIntensity?: number;
+  opacity?: number;
+  transparent?: boolean;
+}
+
 export interface NetworkBlock {
   x: number;
   y: number;
   z: number;
   structureId: string;
   rotation: number;
+  material?: NetworkBlockMaterial;
 }
 
 export interface NetworkPlayer {

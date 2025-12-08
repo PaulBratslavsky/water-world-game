@@ -26,9 +26,8 @@ import {
   getPrefab,
   loadPrefabsFromAPI,
   rebuildPrefabsFromDefaults,
-  PrefabDefinition,
 } from "./structures/PrefabDefinition";
-import { PrefabCaptureSystem, getClipboard, hasClipboard } from "./structures/PrefabCaptureSystem";
+import { PrefabCaptureSystem, hasClipboard } from "./structures/PrefabCaptureSystem";
 
 // UI
 import { UIManager } from "./ui/UIManager";
@@ -49,10 +48,16 @@ import {
   clearExplorerSave,
 } from "./core/SaveSystem";
 
-// Networking
+// Networking (legacy - to be replaced by MultiplayerManager)
 import { NetworkManager } from "./network/NetworkManager";
 import { RemotePlayer } from "./entities/RemotePlayer";
 import { NetworkBlock, NetworkPlayer } from "./network/NetworkProtocol";
+
+// Managers (refactored)
+import { LightingManager } from "./lighting/LightingManager";
+import { BuildModeManager } from "./build/BuildModeManager";
+import { SelectionManager } from "./build/SelectionManager";
+// import { MultiplayerManager } from "./network/MultiplayerManager"; // TODO: integrate to replace initializeNetworking
 
 /**
  * Game - Main application class
@@ -89,16 +94,11 @@ class Game {
     fillLight: THREE.DirectionalLight;
   } | null = null;
 
-  // Prefab placement state
-  private currentPrefab: PrefabDefinition | null = null;
-  private prefabPreview: THREE.Group | null = null;
-  private prefabBuildLevel = 0; // Build level for prefabs
-  private prefabRotation = 0; // 0, 1, 2, 3 = 0°, 90°, 180°, 270°
-
-  // Paste mode state (similar to prefab placement)
-  private isPasteMode = false;
-  private pastePreview: THREE.Group | null = null;
-  private pasteRotation = 0; // 0, 1, 2, 3 = 0°, 90°, 180°, 270°
+  // Managers (new refactored modules)
+  private lightingManager: LightingManager | null = null;
+  private buildModeManager: BuildModeManager | null = null;
+  private selectionManager: SelectionManager | null = null;
+  // Note: MultiplayerManager to be integrated in a future step to replace initializeNetworking
 
   // Drag-to-place state for blocks
   private isDraggingToPlace = false;
@@ -109,11 +109,6 @@ class Game {
   private isDraggingToDelete = false;
   private lastDeletedGridX = -Infinity;
   private lastDeletedGridZ = -Infinity;
-
-  // Cursor highlight
-  private cursorHighlight: THREE.Group | null = null;
-  private lastHighlightGridX = -Infinity;
-  private lastHighlightGridZ = -Infinity;
 
   // Track if mouse moved (vs just camera rotation)
   private mouseMovedSinceLastUpdate = false;
@@ -253,25 +248,25 @@ class Game {
       if (key === "r") {
         if (stateManager.isPlacing()) {
           this.placementSystem.rotatePreview();
-        } else if (this.currentPrefab) {
-          this.rotatePrefabPreview();
-        } else if (this.isPasteMode) {
-          this.rotatePastePreview();
+        } else if (this.buildModeManager?.getCurrentPrefab()) {
+          this.buildModeManager?.rotatePrefabPreview();
+        } else if (this.buildModeManager?.isPasteModeActive()) {
+          this.buildModeManager?.rotatePastePreview();
         }
       }
 
       // V to paste clipboard in build mode
       if (key === "v" && stateManager.getMode() === "build" && hasClipboard()) {
-        this.handlePaste();
+        this.buildModeManager?.enterPasteMode();
       }
 
       // Handle level changes in build mode
       // Space = level up, Shift = level down (only in build mode)
       if (stateManager.getMode() === "build") {
         if (key === " ") {
-          this.cycleBuildLevel(1);
+          this.buildModeManager?.cycleBuildLevel(1);
         } else if (key === "shift") {
-          this.cycleBuildLevel(-1);
+          this.buildModeManager?.cycleBuildLevel(-1);
         }
       }
     });
@@ -281,26 +276,12 @@ class Game {
       if (mode === "build") {
         // Show level plane in build mode
         this.placementSystem.showLevelPlane();
-        this.updateBuildModeLevelPlane();
+        this.buildModeManager?.updateBuildModeLevelPlane();
       } else {
         // Hide level plane in move mode (unless placing something)
-        if (!stateManager.isPlacing() && !this.currentPrefab) {
+        if (!stateManager.isPlacing() && !this.buildModeManager?.getCurrentPrefab()) {
           this.placementSystem.hideLevelPlane();
         }
-      }
-    });
-
-    // Enable/disable build mode raycasting based on camera mode
-    onEvent("state:cameraModeChanged", ({ cameraMode }) => {
-      // In build mode, only raycast against the level plane (not blocks)
-      this.inputManager.setBuildModeRaycast(cameraMode === "build");
-
-      // Sync InputManager ground plane height when entering build mode
-      if (cameraMode === "build") {
-        this.inputManager.setGroundPlaneHeight(this.sharedBuildLevel);
-      } else {
-        // Reset to ground level for explore modes
-        this.inputManager.setGroundPlaneHeight(0);
       }
     });
 
@@ -309,9 +290,10 @@ class Game {
       const structure = getStructure(structureId);
       if (structure) {
         // Cancel any current prefab placement
-        this.cancelPrefabPlacement();
+        this.buildModeManager?.cancelPrefabPlacement();
         // Set the shared build level before starting placement
-        this.placementSystem.setCurrentLevel(this.sharedBuildLevel);
+        const level = this.buildModeManager?.getSharedBuildLevel() ?? 0;
+        this.placementSystem.setCurrentLevel(level);
         this.placementSystem.startPlacement(structure);
       }
     });
@@ -319,7 +301,7 @@ class Game {
     // Handle placement cancellation
     onEvent("structure:placementCancelled", () => {
       this.placementSystem.cancelPlacement();
-      this.cancelPrefabPlacement();
+      this.buildModeManager?.cancelPrefabPlacement();
     });
 
     // Handle prefab selection
@@ -328,16 +310,16 @@ class Game {
       if (prefab) {
         // Cancel any current structure placement
         this.placementSystem.cancelPlacement();
-        this.startPrefabPlacement(prefab);
+        this.buildModeManager?.startPrefabPlacement(prefab);
       }
     });
 
     // Handle prefab placement and paste mode cancellation (Escape key)
     onEvent("prefab:cancelPlacement", () => {
-      if (this.isPasteMode) {
-        this.exitPasteMode();
-      } else if (this.currentPrefab) {
-        this.cancelPrefabPlacement();
+      if (this.buildModeManager?.isPasteModeActive()) {
+        this.buildModeManager?.exitPasteMode();
+      } else if (this.buildModeManager?.getCurrentPrefab()) {
+        this.buildModeManager?.cancelPrefabPlacement();
       } else if (stateManager.getCameraMode() === "build") {
         // Nothing to cancel, exit build mode
         stateManager.exitBuildMode();
@@ -346,7 +328,7 @@ class Game {
 
     // Sync shared build level when structure placement level changes
     onEvent("structure:levelChanged", ({ level }) => {
-      this.sharedBuildLevel = level;
+      this.buildModeManager?.setSharedBuildLevel(level);
       // Update grayscale effect for blocks below the current level
       if (stateManager.getCameraMode() === "build") {
         this.placementSystem.setGrayscaleBelowLevel(level);
@@ -357,15 +339,16 @@ class Game {
     onEvent("state:prefabCaptureChanged", ({ active }) => {
       if (active) {
         // Exit paste mode when entering selection mode to avoid conflicts
-        if (this.isPasteMode) {
-          this.exitPasteMode();
+        if (this.buildModeManager?.isPasteModeActive()) {
+          this.buildModeManager?.exitPasteMode();
         }
         // Cancel any prefab placement
-        if (this.currentPrefab) {
-          this.cancelPrefabPlacement();
+        if (this.buildModeManager?.getCurrentPrefab()) {
+          this.buildModeManager?.cancelPrefabPlacement();
         }
         if (this.prefabCaptureSystem) {
-          this.prefabCaptureSystem.setLevel(this.sharedBuildLevel);
+          const level = this.buildModeManager?.getSharedBuildLevel() ?? 0;
+          this.prefabCaptureSystem.setLevel(level);
         }
       }
     });
@@ -430,6 +413,9 @@ class Game {
 
     // Handle camera mode changes
     onEvent("state:cameraModeChanged", ({ cameraMode, previous }) => {
+      // Enable/disable build mode raycasting
+      this.inputManager.setBuildModeRaycast(cameraMode === "build");
+
       // Update character visibility based on camera mode
       if (cameraMode === "first-person" || cameraMode === "build") {
         this.character.setVisible(false);
@@ -441,17 +427,18 @@ class Game {
       if (cameraMode === "build" && previous !== "build") {
         const playerPos = this.playerController.getPosition();
         // Set build level to player's current floor level (rounded down)
-        this.sharedBuildLevel = Math.floor(playerPos.y);
-        this.cameraSystem.setBuildLevel(this.sharedBuildLevel);
+        const buildLevel = Math.floor(playerPos.y);
+        this.buildModeManager?.setSharedBuildLevel(buildLevel);
+        this.cameraSystem.setBuildLevel(buildLevel);
         // Also set the build target position to player's XZ position
         this.cameraSystem.setBuildTargetPosition(playerPos.x, playerPos.z);
         // Sync InputManager ground plane
-        this.inputManager.setGroundPlaneHeight(this.sharedBuildLevel);
+        this.inputManager.setGroundPlaneHeight(buildLevel);
         // Enable wireframe effect for blocks below build level
-        this.placementSystem.setGrayscaleBelowLevel(this.sharedBuildLevel);
+        this.placementSystem.setGrayscaleBelowLevel(buildLevel);
         // Emit level changed event for UI
         emitEvent("structure:levelChanged", {
-          level: this.sharedBuildLevel,
+          level: buildLevel,
           maxLevel: 50,
         });
 
@@ -468,9 +455,10 @@ class Game {
       // When exiting build mode, teleport player to the ghost block position
       if (previous === "build" && cameraMode !== "build") {
         const buildTarget = this.cameraSystem.getBuildTargetPosition();
+        const buildLevel = this.buildModeManager?.getSharedBuildLevel() ?? 0;
         // Set player position to the build target (ghost block location)
         // Y is set to the build level (top of where blocks would be placed)
-        this.playerController.setPosition(buildTarget.x, this.sharedBuildLevel, buildTarget.z);
+        this.playerController.setPosition(buildTarget.x, buildLevel, buildTarget.z);
 
         const playerPos = this.playerController.getPosition();
         this.cameraSystem.setPlayerPosition(playerPos);
@@ -479,6 +467,9 @@ class Game {
 
         // Disable wireframe effect when exiting build mode
         this.placementSystem.setGrayscaleBelowLevel(null);
+
+        // Reset ground plane height to ground level for explore modes
+        this.inputManager.setGroundPlaneHeight(0);
 
         // Restore night mode if it was active before entering build mode
         if (this.wasNightModeBeforeBuild) {
@@ -511,7 +502,7 @@ class Game {
       if (e.button === 0) {
         // Left click - drag to place
         if (!stateManager.isPlacing()) return;
-        if (this.currentPrefab) return; // Don't drag prefabs
+        if (this.buildModeManager?.getCurrentPrefab()) return; // Don't drag prefabs
 
         this.isDraggingToPlace = true;
         this.lastPlacedGridX = -Infinity;
@@ -551,14 +542,14 @@ class Game {
     // Get build height for visual positioning
     // Use shared level when not actively placing, otherwise use the specific placement level
     const isPlacingStructure = stateManager.isPlacing();
-    const isPlacingPrefab = this.currentPrefab !== null;
+    const isPlacingPrefab = this.buildModeManager?.getCurrentPrefab() !== null;
     let buildHeight: number;
     if (isPlacingPrefab) {
-      buildHeight = this.prefabBuildLevel;
+      buildHeight = this.buildModeManager?.getSharedBuildLevel() ?? 0;
     } else if (isPlacingStructure) {
       buildHeight = this.placementSystem.getCurrentBuildLevel();
     } else {
-      buildHeight = this.sharedBuildLevel;
+      buildHeight = this.buildModeManager?.getSharedBuildLevel() ?? 0;
     }
 
     const cellSize = this.chunkManager.getCellSize();
@@ -615,10 +606,10 @@ class Game {
 
     // Update cursor highlight in build mode
     if (isBuildMode) {
-      this.updateCursorHighlight(gridX, gridZ, buildHeight);
-      this.showCursorHighlight();
+      this.buildModeManager?.updateCursorHighlight(gridX, gridZ, buildHeight);
+      this.buildModeManager?.showCursorHighlight();
     } else {
-      this.hideCursorHighlight();
+      this.buildModeManager?.hideCursorHighlight();
     }
 
     if (isPlacingStructure) {
@@ -646,12 +637,12 @@ class Game {
       }
     }
     if (isPlacingPrefab) {
-      this.updatePrefabPreview(this.lastMouseWorldX, this.lastMouseWorldZ);
+      this.buildModeManager?.updatePrefabPreview(this.lastMouseWorldX, this.lastMouseWorldZ);
     }
 
     // Update paste preview
-    if (this.isPasteMode) {
-      this.updatePastePreview(gridX, gridZ);
+    if (this.buildModeManager?.isPasteModeActive()) {
+      this.buildModeManager?.updatePastePreview(gridX, gridZ);
     }
 
     // Update prefab capture preview
@@ -661,8 +652,9 @@ class Game {
     }
 
     // Update level plane in build mode when not placing anything
-    if (isBuildMode && !isPlacingStructure && !isPlacingPrefab && !stateManager.isPrefabCaptureMode() && !this.isPasteMode) {
-      this.placementSystem.updateLevelPlaneAt(gridX, gridZ, this.sharedBuildLevel);
+    const sharedLevel = this.buildModeManager?.getSharedBuildLevel() ?? 0;
+    if (isBuildMode && !isPlacingStructure && !isPlacingPrefab && !stateManager.isPrefabCaptureMode() && !this.buildModeManager?.isPasteModeActive()) {
+      this.placementSystem.updateLevelPlaneAt(gridX, gridZ, sharedLevel);
     }
 
     // Drag-to-delete: remove blocks while dragging with right mouse
@@ -688,11 +680,11 @@ class Game {
 
     if (mode === "build") {
       // Check for paste mode first
-      if (this.isPasteMode) {
+      if (this.buildModeManager?.isPasteModeActive()) {
         const cellSize = this.chunkManager.getCellSize();
         const gridX = Math.floor(this.lastMouseWorldX / cellSize);
         const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-        this.confirmPaste(gridX, gridZ);
+        this.buildModeManager?.confirmPaste(gridX, gridZ);
         // Stay in paste mode for multiple pastes - press Escape to exit
         return;
       }
@@ -709,13 +701,13 @@ class Game {
       }
 
       // Check for prefab placement
-      if (this.currentPrefab) {
+      if (this.buildModeManager?.getCurrentPrefab()) {
         // Use the same grid position as the preview (calculated from ground plane intersection)
         // This ensures placement matches the visual preview exactly
         const cellSize = this.chunkManager.getCellSize();
         const gridX = Math.floor(this.lastMouseWorldX / cellSize);
         const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-        this.confirmPrefabPlacement(gridX, gridZ);
+        this.buildModeManager?.confirmPrefabPlacement(gridX, gridZ);
         return;
       }
 
@@ -783,82 +775,6 @@ class Game {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.postProcessing?.onResize(window.innerWidth, window.innerHeight);
-  }
-
-  // Cycle build level when in build mode (works even when not placing anything)
-  private cycleBuildLevel(direction: number): void {
-    let newLevel: number;
-
-    // If placing a structure, use placement system's level cycling
-    if (stateManager.isPlacing()) {
-      this.placementSystem.cycleLevel(direction);
-      newLevel = this.placementSystem.getCurrentBuildLevel();
-      // Sync InputManager ground plane for click events
-      this.inputManager.setGroundPlaneHeight(newLevel);
-      // Update camera to follow the new level
-      this.cameraSystem.setBuildLevel(newLevel);
-      return;
-    }
-
-    // If placing a prefab, use prefab level cycling
-    if (this.currentPrefab) {
-      this.cyclePrefabLevel(direction);
-      newLevel = this.prefabBuildLevel;
-      // Sync InputManager ground plane for click events
-      this.inputManager.setGroundPlaneHeight(newLevel);
-      // Update camera to follow the new level
-      this.cameraSystem.setBuildLevel(newLevel);
-      return;
-    }
-
-    // If in prefab capture mode, update capture system
-    // The callback (setOnLevelChanged) handles plane/camera updates
-    if (stateManager.isPrefabCaptureMode() && this.prefabCaptureSystem) {
-      this.prefabCaptureSystem.adjustLevel(direction);
-      return;
-    }
-
-    // Otherwise, just update the shared level and show the plane
-    const maxLevel = 50;
-    if (direction > 0) {
-      this.sharedBuildLevel = Math.min(maxLevel, this.sharedBuildLevel + 1);
-    } else {
-      this.sharedBuildLevel = Math.max(0, this.sharedBuildLevel - 1);
-    }
-    newLevel = this.sharedBuildLevel;
-
-    // Sync InputManager ground plane for click events
-    this.inputManager.setGroundPlaneHeight(newLevel);
-
-    // Update camera to follow the new level
-    this.cameraSystem.setBuildLevel(newLevel);
-
-    // Update the level plane position
-    this.updateBuildModeLevelPlane();
-
-    // Update cursor highlight to new level
-    const cellSize = this.chunkManager.getCellSize();
-    const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-    const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-    this.updateCursorHighlight(gridX, gridZ, newLevel);
-
-    // Emit level changed event for UI feedback
-    emitEvent("structure:levelChanged", {
-      level: newLevel,
-      maxLevel: maxLevel,
-    });
-  }
-
-  // Update level plane position when in build mode without active placement
-  private updateBuildModeLevelPlane(): void {
-    if (stateManager.getMode() !== "build") return;
-    if (stateManager.isPlacing() || this.currentPrefab) return;
-
-    const cellSize = this.chunkManager.getCellSize();
-    const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-    const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-
-    this.placementSystem.updateLevelPlaneAt(gridX, gridZ, this.sharedBuildLevel);
   }
 
   // Expose scene config for runtime customization
@@ -1301,11 +1217,8 @@ class Game {
   }
 
   // ============================================
-  // PREFAB PLACEMENT
+  // BUILD MODE STATE
   // ============================================
-
-  // Shared build level across all placement modes (structures and prefabs)
-  private sharedBuildLevel = 0;
 
   // Track last mouse position for prefab initial placement
   private lastMouseWorldX = 0;
@@ -1315,505 +1228,63 @@ class Game {
   private lastMouseScreenX = 0;
   private lastMouseScreenY = 0;
 
-  private startPrefabPlacement(prefab: PrefabDefinition): void {
-    this.cancelPrefabPlacement();
-    this.currentPrefab = prefab;
-    this.prefabBuildLevel = this.sharedBuildLevel; // Use shared build level
-    this.prefabRotation = 0; // Reset rotation
-    this.prefabPreview = this.placementSystem.createPrefabPreview(prefab, this.prefabRotation);
-    this.scene.add(this.prefabPreview);
+  // Prefab placement, paste mode, and cursor highlight are now handled by BuildModeManager
 
-    // Show level plane indicator at the correct level
-    this.placementSystem.showLevelPlane();
-    const cellSize = this.chunkManager.getCellSize();
-    const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-    const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-    this.placementSystem.updateLevelPlaneAt(gridX, gridZ, this.prefabBuildLevel);
+  /**
+   * Initialize the refactored manager modules
+   */
+  private initializeManagers(): void {
+    // Initialize LightingManager
+    this.lightingManager = new LightingManager({
+      scene: this.scene,
+      camera: this.camera,
+      renderer: this.renderer,
+      sceneConfig: this.sceneConfig,
+    });
+    // Note: LightingManager.createLighting() is called later, using existing lights for now
 
-    // Update camera to the build level
-    this.cameraSystem.setBuildLevel(this.prefabBuildLevel);
-
-    // Sync ground plane for raycasting
-    this.inputManager.setGroundPlaneHeight(this.prefabBuildLevel);
-
-    // Position at last known mouse position
-    this.updatePrefabPreview(this.lastMouseWorldX, this.lastMouseWorldZ);
-  }
-
-  private rotatePrefabPreview(): void {
-    if (!this.prefabPreview || !this.currentPrefab) return;
-
-    // Remove old preview
-    this.scene.remove(this.prefabPreview);
-    this.prefabPreview.traverse((child) => {
-      if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
-        child.geometry.dispose();
-        if (child.material instanceof THREE.Material) {
-          child.material.dispose();
-        }
-      }
+    // Initialize BuildModeManager
+    this.buildModeManager = new BuildModeManager({
+      scene: this.scene,
+      placementSystem: this.placementSystem,
+      chunkManager: this.chunkManager,
+      cameraSystem: this.cameraSystem,
+      inputManager: this.inputManager,
+    });
+    this.buildModeManager.setCallbacks({
+      onBlockPlaced: (x, y, z, blockId) => this.sendBlockPlacedToServer(x, y, z, blockId),
     });
 
-    // Increment rotation
-    this.prefabRotation = (this.prefabRotation + 1) % 4;
-
-    // Create new preview with updated rotation
-    this.prefabPreview = this.placementSystem.createPrefabPreview(this.currentPrefab, this.prefabRotation);
-    this.scene.add(this.prefabPreview);
-
-    // Reposition at current location
-    this.updatePrefabPreview(this.lastMouseWorldX, this.lastMouseWorldZ);
-  }
-
-  private cyclePrefabLevel(direction: number): void {
-    if (!this.currentPrefab) return;
-
-    const maxLevel = 50;
-
-    if (direction > 0) {
-      this.prefabBuildLevel = Math.min(maxLevel, this.prefabBuildLevel + 1);
-    } else {
-      this.prefabBuildLevel = Math.max(0, this.prefabBuildLevel - 1);
-    }
-
-    // Update shared level so it persists when switching placement modes
-    this.sharedBuildLevel = this.prefabBuildLevel;
-
-    // Update preview Y position
-    if (this.prefabPreview) {
-      this.prefabPreview.position.y = this.prefabBuildLevel;
-    }
-
-    // Update level plane to show the new level
-    const cellSize = this.chunkManager.getCellSize();
-    const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-    const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-    this.placementSystem.updateLevelPlaneAt(gridX, gridZ, this.prefabBuildLevel);
-
-    // Emit level changed event
-    emitEvent("structure:levelChanged", {
-      level: this.prefabBuildLevel,
-      maxLevel: maxLevel,
+    // Initialize SelectionManager
+    this.selectionManager = new SelectionManager({
+      placementSystem: this.placementSystem,
     });
-  }
-
-  private cancelPrefabPlacement(): void {
-    if (this.prefabPreview) {
-      this.scene.remove(this.prefabPreview);
-      this.prefabPreview.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose();
-          (child.material as THREE.Material).dispose();
-        }
-        if (child instanceof THREE.LineSegments) {
-          child.geometry.dispose();
-          (child.material as THREE.Material).dispose();
-        }
-      });
-      this.prefabPreview = null;
-    }
-    this.currentPrefab = null;
-
-    // Hide level plane indicator
-    this.placementSystem.hideLevelPlane();
-  }
-
-  private updatePrefabPreview(worldX: number, worldZ: number): void {
-    if (!this.prefabPreview || !this.currentPrefab) return;
-
-    const cellSize = this.chunkManager.getCellSize();
-    const gridX = Math.floor(worldX / cellSize);
-    const gridZ = Math.floor(worldZ / cellSize);
-
-    // Position same as regular structure preview
-    this.prefabPreview.position.set(
-      gridX * cellSize + cellSize / 2,
-      this.prefabBuildLevel,
-      gridZ * cellSize + cellSize / 2
-    );
-
-    // Update level plane position
-    this.placementSystem.updateLevelPlaneAt(gridX, gridZ, this.prefabBuildLevel);
-
-    // Update opacity based on validity (keep original colors)
-    const canPlace = this.placementSystem.canPlacePrefab(
-      this.currentPrefab,
-      gridX,
-      gridZ,
-      this.prefabBuildLevel,
-      this.prefabRotation
-    );
-
-    this.prefabPreview.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        const material = child.material as THREE.MeshStandardMaterial;
-        material.opacity = canPlace ? 0.8 : 0.3;
-      }
+    this.selectionManager.setCallbacks({
+      onBlockRemoved: (x, y, z) => this.sendBlockRemovedToServer(x, y, z),
+      onEnterPasteMode: () => this.buildModeManager?.enterPasteMode(),
     });
-  }
 
-  private confirmPrefabPlacement(gridX: number, gridZ: number): boolean {
-    if (!this.currentPrefab) return false;
-
-    const prefab = this.currentPrefab;
-    const level = this.prefabBuildLevel;
-    const rotation = this.prefabRotation;
-
-    const placed = this.placementSystem.placePrefab(
-      prefab,
-      gridX,
-      gridZ,
-      level,
-      rotation
-    );
-    if (placed) {
-      // Send each prefab block to the server for multiplayer sync
-      if (this.isMultiplayer && this.networkManager) {
-        const blockPositions = this.placementSystem.getPrefabBlockPositions(
-          prefab,
-          gridX,
-          gridZ,
-          level,
-          rotation
-        );
-        for (const block of blockPositions) {
-          this.sendBlockPlacedToServer(block.x, block.y, block.z, block.blockId);
-        }
-      }
-
-      // Restart placement with same prefab (keep current level, rotation, and position)
-      const cellSize = this.chunkManager.getCellSize();
-
-      this.cancelPrefabPlacement();
-
-      // Recreate preview with same rotation
-      this.currentPrefab = prefab;
-      this.prefabBuildLevel = level;
-      this.prefabRotation = rotation;
-      this.prefabPreview = this.placementSystem.createPrefabPreview(prefab, rotation);
-      this.scene.add(this.prefabPreview);
-
-      // Position at same grid location (where we just placed)
-      this.updatePrefabPreview(gridX * cellSize, gridZ * cellSize);
-    }
-    return placed;
-  }
-
-  private createCursorHighlight(): THREE.Group {
-    const cellSize = this.chunkManager.getCellSize();
-    const group = new THREE.Group();
-
-    // Wireframe box
-    const boxGeometry = new THREE.BoxGeometry(cellSize, cellSize, cellSize);
-    const edgesGeometry = new THREE.EdgesGeometry(boxGeometry);
-    const edgeMaterial = new THREE.LineBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.8
-    });
-    const edges = new THREE.LineSegments(edgesGeometry, edgeMaterial);
-    group.add(edges);
-
-    // Semi-transparent fill
-    const fillMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.15,
-      side: THREE.DoubleSide
-    });
-    const fill = new THREE.Mesh(boxGeometry, fillMaterial);
-    group.add(fill);
-
-    return group;
-  }
-
-  private lastHighlightBuildLevel = -1;
-
-  private updateCursorHighlight(gridX: number, gridZ: number, buildLevel: number): void {
-    // Only update if position or level changed
-    if (gridX === this.lastHighlightGridX &&
-        gridZ === this.lastHighlightGridZ &&
-        buildLevel === this.lastHighlightBuildLevel) {
-      return;
-    }
-    this.lastHighlightGridX = gridX;
-    this.lastHighlightGridZ = gridZ;
-    this.lastHighlightBuildLevel = buildLevel;
-
-    // Create highlight if it doesn't exist
-    if (!this.cursorHighlight) {
-      this.cursorHighlight = this.createCursorHighlight();
-      this.scene.add(this.cursorHighlight);
-    }
-
-    const cellSize = this.chunkManager.getCellSize();
-    this.cursorHighlight.position.set(
-      gridX * cellSize + cellSize / 2,
-      buildLevel + cellSize / 2,
-      gridZ * cellSize + cellSize / 2
-    );
-  }
-
-  private hideCursorHighlight(): void {
-    if (this.cursorHighlight) {
-      this.cursorHighlight.visible = false;
-    }
-  }
-
-  private showCursorHighlight(): void {
-    if (this.cursorHighlight) {
-      this.cursorHighlight.visible = true;
-    }
-  }
-
-  // ============================================
-  // SELECTION ACTION HANDLERS
-  // ============================================
-
-  private handleSelectionCut(): void {
-    if (!this.prefabCaptureSystem) return;
-
-    // Copy to clipboard first
-    const copied = this.prefabCaptureSystem.copyToClipboard();
-    if (!copied) return;
-
-    // Then delete the blocks
-    this.deleteSelectedBlocks();
-
-    // Enter paste mode to place the cut blocks
-    this.enterPasteMode();
-
-    // Clear selection and exit mode
-    this.prefabCaptureSystem.clearAndExit();
-  }
-
-  private handleSelectionCopy(): void {
-    if (!this.prefabCaptureSystem) return;
-
-    const copied = this.prefabCaptureSystem.copyToClipboard();
-    if (copied) {
-      console.log("Selection copied to clipboard - entering paste mode");
-      // Enter paste mode to place the copied blocks
-      this.enterPasteMode();
-    }
-
-    // Clear selection and exit mode
-    this.prefabCaptureSystem.clearAndExit();
-  }
-
-  private handleSelectionDelete(): void {
-    if (!this.prefabCaptureSystem) return;
-
-    this.deleteSelectedBlocks();
-
-    // Clear selection and exit mode
-    this.prefabCaptureSystem.clearAndExit();
-  }
-
-  private handleSelectionApplyMaterial(material: {
-    metalness?: number;
-    roughness?: number;
-    emissive?: string;
-    emissiveIntensity?: number;
-    opacity?: number;
-    transparent?: boolean;
-  }): void {
-    if (!this.prefabCaptureSystem) return;
-
-    const blocks = this.prefabCaptureSystem.getRawBlocksInSelection();
-    let updatedCount = 0;
-
-    for (const block of blocks) {
-      // Update the block's material in the placement system
-      const updated = this.placementSystem.updateBlockMaterial(block.x, block.y, block.z, material);
-      if (updated) {
-        updatedCount++;
-      }
-    }
-
-    console.log(`Updated material for ${updatedCount} blocks`);
-
-    // Clear selection and exit mode
-    this.prefabCaptureSystem.clearAndExit();
-  }
-
-  private deleteSelectedBlocks(): void {
-    if (!this.prefabCaptureSystem) return;
-
-    const blocks = this.prefabCaptureSystem.getRawBlocksInSelection();
-
-    for (const block of blocks) {
-      const removed = this.placementSystem.removeBlockAt(block.x, block.y, block.z);
-      if (removed) {
-        this.sendBlockRemovedToServer(block.x, block.y, block.z);
-      }
-    }
-
-    console.log(`Deleted ${blocks.length} blocks`);
-  }
-
-  private handlePaste(): void {
-    // Just enter paste mode when V is pressed
-    this.enterPasteMode();
-  }
-
-  private enterPasteMode(): void {
-    const clipboard = getClipboard();
-    if (!clipboard || clipboard.blocks.length === 0) return;
-
-    this.isPasteMode = true;
-    this.pasteRotation = 0; // Reset rotation when entering paste mode
-    this.createPastePreview();
-    console.log("Entered paste mode - click to place, R to rotate, Escape to cancel");
-  }
-
-  private exitPasteMode(): void {
-    this.isPasteMode = false;
-    if (this.pastePreview) {
-      this.scene.remove(this.pastePreview);
-      this.pastePreview.traverse((child) => {
-        if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
-          child.geometry.dispose();
-          if (Array.isArray(child.material)) {
-            child.material.forEach((m) => m.dispose());
-          } else {
-            child.material.dispose();
-          }
-        }
-      });
-      this.pastePreview = null;
-    }
-  }
-
-  private createPastePreview(): void {
-    const clipboard = getClipboard();
-    if (!clipboard || clipboard.blocks.length === 0) return;
-
-    // Remove existing preview
-    if (this.pastePreview) {
-      this.scene.remove(this.pastePreview);
-      this.pastePreview.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose();
-          if (Array.isArray(child.material)) {
-            child.material.forEach((m) => m.dispose());
-          } else {
-            child.material.dispose();
-          }
-        }
-      });
-    }
-
-    this.pastePreview = new THREE.Group();
-    const cellSize = this.chunkManager.getCellSize();
-
-    // Create a semi-transparent block for each block in clipboard
-    for (const block of clipboard.blocks) {
-      const geometry = new THREE.BoxGeometry(
-        cellSize * 0.95,
-        cellSize,
-        cellSize * 0.95
-      );
-
-      // Get block color - use material color override if present, otherwise structure color
-      const structure = getStructure(block.blockId);
-      let color: number | string = structure?.color || 0x888888;
-      if (block.material?.color) {
-        color = block.material.color; // Use color override (hex string)
-      }
-
-      const material = new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.5,
-      });
-
-      const mesh = new THREE.Mesh(geometry, material);
-
-      // Apply rotation to block position
-      const rotated = this.rotateBlockPosition(block.x, block.z, this.pasteRotation);
-
-      mesh.position.set(
-        rotated.x * cellSize + cellSize / 2,
-        block.y * cellSize + cellSize / 2,
-        rotated.z * cellSize + cellSize / 2
-      );
-
-      this.pastePreview.add(mesh);
-    }
-
-    this.scene.add(this.pastePreview);
-  }
-
-  private rotatePastePreview(): void {
-    if (!this.isPasteMode) return;
-
-    // Increment rotation
-    this.pasteRotation = (this.pasteRotation + 1) % 4;
-
-    // Recreate preview with new rotation
-    this.createPastePreview();
-
-    // Reposition at current mouse location
-    const cellSize = this.chunkManager.getCellSize();
-    const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-    const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-    this.updatePastePreview(gridX, gridZ);
+    // Wire up systems after prefabCaptureSystem is created (done in initialize)
   }
 
   /**
-   * Rotate a block position around origin by rotation steps (0-3 = 0°, 90°, 180°, 270°)
+   * Complete manager setup after all systems are initialized
    */
-  private rotateBlockPosition(x: number, z: number, rotation: number): { x: number; z: number } {
-    switch (rotation % 4) {
-      case 0: return { x, z };           // 0°
-      case 1: return { x: -z, z: x };    // 90° clockwise
-      case 2: return { x: -x, z: -z };   // 180°
-      case 3: return { x: z, z: -x };    // 270° clockwise
-      default: return { x, z };
-    }
-  }
-
-  private updatePastePreview(gridX: number, gridZ: number): void {
-    if (!this.pastePreview) return;
-
-    const cellSize = this.chunkManager.getCellSize();
-    this.pastePreview.position.set(
-      gridX * cellSize,
-      this.sharedBuildLevel * cellSize,
-      gridZ * cellSize
-    );
-  }
-
-  private confirmPaste(gridX: number, gridZ: number): boolean {
-    const clipboard = getClipboard();
-    if (!clipboard || clipboard.blocks.length === 0) return false;
-
-    const gridY = this.sharedBuildLevel;
-
-    // Place each block from clipboard at offset from cursor position
-    let placedCount = 0;
-    for (const block of clipboard.blocks) {
-      // Apply rotation to block position
-      const rotated = this.rotateBlockPosition(block.x, block.z, this.pasteRotation);
-
-      const x = gridX + rotated.x;
-      const y = gridY + block.y;
-      const z = gridZ + rotated.z;
-
-      // Place the block with material override if present (for color overrides)
-      const structure = getStructure(block.blockId);
-      if (structure) {
-        const placed = this.placementSystem.placeBlockFromNetwork(x, y, z, block.blockId, 0, block.material);
-        if (placed) {
-          this.sendBlockPlacedToServer(x, y, z, block.blockId);
-          placedCount++;
-        }
-      }
+  private completeManagerSetup(): void {
+    // Wire up prefab capture system to managers
+    if (this.prefabCaptureSystem) {
+      this.buildModeManager?.setPrefabCaptureSystem(this.prefabCaptureSystem);
+      this.selectionManager?.setPrefabCaptureSystem(this.prefabCaptureSystem);
     }
 
-    console.log(`Pasted ${placedCount} blocks at (${gridX}, ${gridY}, ${gridZ}) with rotation ${this.pasteRotation * 90}°`);
-    return placedCount > 0;
+    // Wire up lighting manager with optional systems
+    this.lightingManager?.setSystems({
+      postProcessing: this.postProcessing,
+      waterSystem: this.waterSystem,
+      skySystem: this.skySystem,
+      character: this.character,
+      performancePanel: this.performancePanel,
+    });
   }
 
   async initialize(): Promise<void> {
@@ -1881,6 +1352,9 @@ class Game {
       }
     );
 
+    // Initialize managers (new refactored modules)
+    this.initializeManagers();
+
     // Initialize prefab capture system
     this.prefabCaptureSystem = new PrefabCaptureSystem(
       this.scene,
@@ -1891,13 +1365,14 @@ class Game {
 
     // Connect capture system level changes to plane/camera updates
     this.prefabCaptureSystem.setOnLevelChanged((level: number) => {
-      this.sharedBuildLevel = level;
+      this.buildModeManager?.setSharedBuildLevel(level);
       this.inputManager.setGroundPlaneHeight(level);
       this.cameraSystem.setBuildLevel(level);
       // Update level plane
       const cellSize = this.chunkManager.getCellSize();
-      const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-      const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
+      const lastMousePos = this.buildModeManager?.getLastMouseWorldPosition() ?? { x: 0, z: 0 };
+      const gridX = Math.floor(lastMousePos.x / cellSize);
+      const gridZ = Math.floor(lastMousePos.z / cellSize);
       this.placementSystem.updateLevelPlaneAt(gridX, gridZ, level);
     });
 
@@ -2057,20 +1532,23 @@ class Game {
       this.setNightMode(isNight);
     });
 
-    // Set selection action callbacks
+    // Set selection action callbacks (using SelectionManager)
     this.uiManager.setSelectionCallbacks({
-      onCut: () => this.handleSelectionCut(),
-      onCopy: () => this.handleSelectionCopy(),
-      onDelete: () => this.handleSelectionDelete(),
+      onCut: () => this.selectionManager?.handleCut(),
+      onCopy: () => this.selectionManager?.handleCopy(),
+      onDelete: () => this.selectionManager?.handleDelete(),
     });
 
-    // Handle selection material changes
+    // Handle selection material changes (using SelectionManager)
     onEvent("selection:applyMaterial", ({ material }) => {
-      this.handleSelectionApplyMaterial(material);
+      this.selectionManager?.handleApplyMaterial(material);
     });
 
     // Apply initial quality settings (default is "high" with greedy meshing enabled)
     this.placementSystem.setQualityLevel("high");
+
+    // Complete manager setup now that all systems are initialized
+    this.completeManagerSetup();
 
     // Initialize multiplayer first - if server connects, it will provide world state
     // and we skip local loading to avoid sync issues
@@ -2524,11 +2002,11 @@ class Game {
     if (cameraMode === "build") {
       // Build mode: camera moves independently, player stays put
       // Update build level for camera
-      const buildLevel = this.currentPrefab
-        ? this.prefabBuildLevel
+      const buildLevel = this.buildModeManager?.getCurrentPrefab()
+        ? this.buildModeManager?.getSharedBuildLevel() ?? 0
         : stateManager.isPlacing()
           ? this.placementSystem.getCurrentBuildLevel()
-          : this.sharedBuildLevel;
+          : this.buildModeManager?.getSharedBuildLevel() ?? 0;
       this.cameraSystem.setBuildLevel(buildLevel);
       this.cameraSystem.update(deltaTime);
     } else {

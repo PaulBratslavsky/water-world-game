@@ -5,7 +5,6 @@ import { onEvent, emitEvent } from "./core/EventBus";
 import { InputManager } from "./core/InputManager";
 import { stateManager } from "./core/StateManager";
 import { PlayerController } from "./core/PlayerController";
-import { PlayerState } from "./core/PlayerState";
 
 // Game systems
 import { ChunkManager } from "./grid/ChunkManager";
@@ -48,16 +47,12 @@ import {
   clearExplorerSave,
 } from "./core/SaveSystem";
 
-// Networking (legacy - to be replaced by MultiplayerManager)
-import { NetworkManager } from "./network/NetworkManager";
-import { RemotePlayer } from "./entities/RemotePlayer";
-import { NetworkBlock, NetworkPlayer } from "./network/NetworkProtocol";
 
 // Managers (refactored)
 import { LightingManager } from "./lighting/LightingManager";
 import { BuildModeManager } from "./build/BuildModeManager";
 import { SelectionManager } from "./build/SelectionManager";
-// import { MultiplayerManager } from "./network/MultiplayerManager"; // TODO: integrate to replace initializeNetworking
+import { MultiplayerManager } from "./network/MultiplayerManager";
 
 /**
  * Game - Main application class
@@ -98,7 +93,7 @@ class Game {
   private lightingManager: LightingManager | null = null;
   private buildModeManager: BuildModeManager | null = null;
   private selectionManager: SelectionManager | null = null;
-  // Note: MultiplayerManager to be integrated in a future step to replace initializeNetworking
+  private multiplayerManager: MultiplayerManager | null = null;
 
   // Drag-to-place state for blocks
   private isDraggingToPlace = false;
@@ -114,22 +109,6 @@ class Game {
   private mouseMovedSinceLastUpdate = false;
   private lockedGridX = -Infinity;
   private lockedGridZ = -Infinity;
-
-  // Networking
-  private networkManager: NetworkManager | null = null;
-  private remotePlayers: Map<string, RemotePlayer> = new Map();
-  private localPlayerId: string | null = null;
-  private isMultiplayer = false;
-  private intentionalDisconnect = false;
-
-  // Day/Night mode tracking
-  private isNightMode = false;
-  private wasNightModeBeforeBuild = false;
-  private currentVisualPreset: VisualPreset = "default";
-  private firstPersonLight: THREE.SpotLight | null = null;
-  private firstPersonAmbient: THREE.PointLight | null = null;
-  private firstPersonParticles: THREE.Points | null = null;
-  private firstPersonParticleVelocities: Float32Array | null = null;
 
   // Reusable THREE objects to avoid GC pressure (see r3f pitfalls)
   private readonly _mouse = new THREE.Vector2();
@@ -366,43 +345,23 @@ class Game {
       this.uiManager?.refreshBlockMenu();
       this.uiManager?.refreshPrefabMenu();
 
-      // Disconnect and reconnect with new world ID
-      if (this.networkManager) {
-        this.networkManager.disconnect();
-      }
-      this.initializeNetworking();
+      // Reconnect with new world ID via MultiplayerManager
+      this.multiplayerManager?.reconnect(worldId);
     });
 
     // Handle world disconnection (user clicked "Leave")
     onEvent("world:disconnected", () => {
       console.log("World deselected, switching to single player...");
 
-      // Mark as intentional so onDisconnected knows not to enter explorer mode
-      this.intentionalDisconnect = true;
-
-      // Disconnect from server when leaving world
-      if (this.networkManager) {
-        console.log("Disconnecting from server");
-        this.networkManager.disconnect();
-        this.isMultiplayer = false;
-      }
+      // Disconnect from server (MultiplayerManager handles cleanup)
+      this.multiplayerManager?.disconnect();
 
       // Clear explorer mode temp data (don't keep changes from cloud world)
       clearExplorerSave();
 
-      // Switch to single player mode
-      stateManager.setConnectionMode("single-player");
-
       // Clear the world blocks
       console.log("Clearing all blocks");
       this.placementSystem.clearAll();
-
-      // Remove all remote players
-      console.log(`Removing ${this.remotePlayers.size} remote players`);
-      for (const [, remotePlayer] of this.remotePlayers) {
-        remotePlayer.dispose(this.scene);
-      }
-      this.remotePlayers.clear();
 
       // Load personal local saved game from localStorage
       console.log("Loading personal local world for single player mode");
@@ -443,13 +402,7 @@ class Game {
         });
 
         // Force day mode in build mode (save night state to restore later)
-        if (this.isNightMode) {
-          this.wasNightModeBeforeBuild = true;
-          // Apply day mode only if we were in night mode
-          this.isNightMode = false;
-          this.applyDayMode();
-          this.performancePanel?.setDayNightState(false);
-        }
+        this.lightingManager?.saveNightStateForBuild();
       }
 
       // When exiting build mode, teleport player to the ghost block position
@@ -472,11 +425,7 @@ class Game {
         this.inputManager.setGroundPlaneHeight(0);
 
         // Restore night mode if it was active before entering build mode
-        if (this.wasNightModeBeforeBuild) {
-          this.wasNightModeBeforeBuild = false;
-          this.setNightMode(true);
-          this.performancePanel?.setDayNightState(true);
-        }
+        this.lightingManager?.restoreNightStateAfterBuild();
       }
     });
 
@@ -736,24 +685,14 @@ class Game {
    * Send block placement to server (multiplayer)
    */
   private sendBlockPlacedToServer(x: number, y: number, z: number, blockId: string): void {
-    if (this.isMultiplayer && this.networkManager) {
-      this.networkManager.sendBlockPlaced({
-        x,
-        y,
-        z,
-        structureId: blockId,
-        rotation: 0,
-      });
-    }
+    this.multiplayerManager?.sendBlockPlaced(x, y, z, blockId);
   }
 
   /**
    * Send block removal to server (multiplayer)
    */
   private sendBlockRemovedToServer(x: number, y: number, z: number): void {
-    if (this.isMultiplayer && this.networkManager) {
-      this.networkManager.sendBlockRemoved(x, y, z);
-    }
+    this.multiplayerManager?.sendBlockRemoved(x, y, z);
   }
 
   private handleRightClick(data: { gridX: number; gridY: number; gridZ: number }): void {
@@ -780,440 +719,6 @@ class Game {
   // Expose scene config for runtime customization
   getSceneConfig(): SceneConfig {
     return this.sceneConfig;
-  }
-
-  /**
-   * Apply a visual preset (theme) to the entire scene
-   */
-  private applyVisualPreset(presetName: VisualPreset): void {
-    const preset = getPreset(presetName);
-    this.currentVisualPreset = presetName;
-
-    // If in night mode, apply night settings instead
-    if (this.isNightMode) {
-      this.applyNightMode();
-      return;
-    }
-
-    // Update scene config (background, fog)
-    this.sceneConfig.applySettings({
-      backgroundColor: preset.scene.backgroundColor,
-      fog: {
-        enabled: true,
-        color: preset.scene.fogColor,
-        near: preset.scene.fogNear,
-        far: preset.scene.fogFar,
-      },
-    });
-
-    // Update lighting
-    if (this.lights) {
-      // Clear cached base intensities so brightness slider recalculates
-      (this.lights as any)._baseIntensities = null;
-
-      this.lights.ambientLight.color.setHex(preset.lighting.ambientColor);
-      this.lights.ambientLight.intensity = preset.lighting.ambientIntensity;
-
-      this.lights.hemisphereLight.color.setHex(preset.lighting.hemisphereColorSky);
-      this.lights.hemisphereLight.groundColor.setHex(preset.lighting.hemisphereColorGround);
-      this.lights.hemisphereLight.intensity = preset.lighting.hemisphereIntensity;
-
-      this.lights.directionalLight.color.setHex(preset.lighting.directionalColor);
-      this.lights.directionalLight.intensity = preset.lighting.directionalIntensity;
-
-      this.lights.fillLight.color.setHex(preset.lighting.fillColor);
-      this.lights.fillLight.intensity = preset.lighting.fillIntensity;
-    }
-
-    // Update water
-    if (this.waterSystem) {
-      this.waterSystem.setWaterColor(preset.water.color);
-      this.waterSystem.setSunColor(preset.water.sunColor);
-      this.waterSystem.setDistortionScale(preset.water.distortionScale);
-      this.waterSystem.setAlpha(preset.water.alpha);
-    }
-
-    // Update sky
-    if (this.skySystem) {
-      this.skySystem.setZenithColor(preset.sky.zenithColor);
-      this.skySystem.setHorizonColor(preset.sky.horizonColor);
-      this.skySystem.setCloudColor(preset.sky.cloudColor);
-      this.skySystem.setCloudOpacity(preset.sky.cloudOpacity);
-      this.skySystem.setCloudSpeed(preset.sky.cloudSpeed);
-      this.skySystem.setCloudDensity(preset.sky.cloudDensity);
-      this.skySystem.setSunColor(preset.sky.sunColor);
-      this.skySystem.setSunIntensity(preset.sky.sunIntensity);
-    }
-
-    // Update post-processing
-    if (this.postProcessing) {
-      this.postProcessing.setBloomStrength(preset.postProcessing.bloomStrength);
-      this.postProcessing.setBloomRadius(preset.postProcessing.bloomRadius);
-      this.postProcessing.setBloomThreshold(preset.postProcessing.bloomThreshold);
-      this.postProcessing.setGreenTint(preset.postProcessing.greenTint);
-      this.postProcessing.setBlueTint(preset.postProcessing.blueTint);
-      this.postProcessing.setContrast(preset.postProcessing.contrast);
-      this.postProcessing.setSaturation(preset.postProcessing.saturation);
-      this.postProcessing.setColorChannels(
-        preset.colorGrade.redReduce,
-        preset.colorGrade.greenBoost,
-        preset.colorGrade.blueReduce
-      );
-      this.renderer.toneMappingExposure = preset.postProcessing.exposure;
-
-      // Apply retro/pixelation effect
-      this.postProcessing.setRetroEnabled(preset.retro.enabled);
-      if (preset.retro.enabled) {
-        this.postProcessing.setRetroSettings({
-          pixelSize: preset.retro.pixelSize,
-          colorDepth: preset.retro.colorDepth,
-          scanlineIntensity: preset.retro.scanlineIntensity,
-          chromaticAberration: preset.retro.chromaticAberration,
-        });
-      }
-    }
-
-    console.log(`Applied visual preset: ${preset.name}`);
-  }
-
-  /**
-   * Set global brightness multiplier for all lights
-   */
-  private setGlobalBrightness(brightness: number): void {
-    if (!this.lights) return;
-
-    // Store base intensities on first call
-    if (!(this.lights as any)._baseIntensities) {
-      (this.lights as any)._baseIntensities = {
-        ambient: this.lights.ambientLight.intensity,
-        hemisphere: this.lights.hemisphereLight.intensity,
-        directional: this.lights.directionalLight.intensity,
-        fill: this.lights.fillLight.intensity,
-      };
-    }
-
-    const base = (this.lights as any)._baseIntensities;
-
-    // Apply brightness multiplier to all lights
-    this.lights.ambientLight.intensity = base.ambient * brightness;
-    this.lights.hemisphereLight.intensity = base.hemisphere * brightness;
-    this.lights.directionalLight.intensity = base.directional * brightness;
-    this.lights.fillLight.intensity = base.fill * brightness;
-
-    // Also adjust exposure for overall scene brightness
-    if (this.postProcessing) {
-      this.renderer.toneMappingExposure = brightness;
-    }
-  }
-
-  /**
-   * Toggle night mode - completely resets scene to day or night settings
-   */
-  private setNightMode(isNight: boolean): void {
-    this.isNightMode = isNight;
-
-    if (isNight) {
-      this.applyNightMode();
-    } else {
-      this.applyDayMode();
-    }
-
-    // Clear cached base intensities so brightness slider recalculates
-    if (this.lights) {
-      (this.lights as any)._baseIntensities = null;
-    }
-  }
-
-  /**
-   * Apply full day mode settings - resets everything to daytime
-   */
-  private applyDayMode(): void {
-    const preset = getPreset(this.currentVisualPreset);
-
-    // === FIRST: Remove all night mode objects (lights, particles) ===
-    // Remove character torch light and fog particles
-    this.character.setLightEnabled(false);
-    // Remove first-person flashlight and particles
-    this.removeFirstPersonLight();
-
-    // === SKY ===
-    if (this.skySystem) {
-      this.skySystem.setZenithColor(preset.sky.zenithColor);
-      this.skySystem.setHorizonColor(preset.sky.horizonColor);
-      this.skySystem.setCloudColor(preset.sky.cloudColor);
-      this.skySystem.setCloudOpacity(preset.sky.cloudOpacity);
-      this.skySystem.setCloudSpeed(preset.sky.cloudSpeed);
-      this.skySystem.setCloudDensity(preset.sky.cloudDensity);
-      this.skySystem.setSunColor(preset.sky.sunColor);
-      this.skySystem.setSunIntensity(preset.sky.sunIntensity);
-    }
-
-    // === FOG & BACKGROUND ===
-    this.sceneConfig.applySettings({
-      backgroundColor: preset.scene.backgroundColor,
-      fog: {
-        enabled: true,
-        color: preset.scene.fogColor,
-        near: preset.scene.fogNear,
-        far: preset.scene.fogFar,
-      },
-    });
-
-    // === LIGHTING ===
-    if (this.lights) {
-      this.lights.ambientLight.color.setHex(preset.lighting.ambientColor);
-      this.lights.ambientLight.intensity = preset.lighting.ambientIntensity;
-      this.lights.hemisphereLight.color.setHex(preset.lighting.hemisphereColorSky);
-      this.lights.hemisphereLight.groundColor.setHex(preset.lighting.hemisphereColorGround);
-      this.lights.hemisphereLight.intensity = preset.lighting.hemisphereIntensity;
-      this.lights.directionalLight.color.setHex(preset.lighting.directionalColor);
-      this.lights.directionalLight.intensity = preset.lighting.directionalIntensity;
-      this.lights.fillLight.color.setHex(preset.lighting.fillColor);
-      this.lights.fillLight.intensity = preset.lighting.fillIntensity;
-    }
-
-    // === EXPOSURE ===
-    this.renderer.toneMappingExposure = preset.postProcessing.exposure;
-
-    // === POST-PROCESSING - Reset ALL settings ===
-    if (this.postProcessing) {
-      // First, completely disable retro pass
-      this.postProcessing.setRetroEnabled(false);
-
-      // Reset bloom
-      this.postProcessing.setBloomStrength(preset.postProcessing.bloomStrength);
-      this.postProcessing.setBloomRadius(preset.postProcessing.bloomRadius);
-      this.postProcessing.setBloomThreshold(preset.postProcessing.bloomThreshold);
-
-      // Reset color grading
-      this.postProcessing.setGreenTint(preset.postProcessing.greenTint);
-      this.postProcessing.setBlueTint(preset.postProcessing.blueTint);
-      this.postProcessing.setContrast(preset.postProcessing.contrast);
-      this.postProcessing.setSaturation(preset.postProcessing.saturation);
-      this.postProcessing.setColorChannels(
-        preset.colorGrade.redReduce,
-        preset.colorGrade.greenBoost,
-        preset.colorGrade.blueReduce
-      );
-
-      // Reset retro shader uniforms to preset defaults (even while disabled)
-      this.postProcessing.setRetroSettings({
-        pixelSize: preset.retro.pixelSize,
-        colorDepth: preset.retro.colorDepth,
-        scanlineIntensity: preset.retro.scanlineIntensity,
-        chromaticAberration: preset.retro.chromaticAberration,
-      });
-      // Vignette to 0 (no edge darkening in day mode)
-      this.postProcessing.setVignetteIntensity(0.0);
-
-      // Only enable retro if preset specifically wants it (e.g., Tron)
-      if (preset.retro.enabled) {
-        this.postProcessing.setRetroEnabled(true);
-      }
-    }
-
-    // === RESET BRIGHTNESS TO DEFAULT ===
-    // Clear any cached base intensities (will be recalculated from current preset values)
-    if (this.lights) {
-      (this.lights as any)._baseIntensities = null;
-    }
-    // Reset brightness slider to 1.0
-    this.performancePanel?.setBrightness(1.0);
-
-    // === UPDATE UI ===
-    this.performancePanel?.setRetroState(preset.retro.enabled);
-  }
-
-  /**
-   * Apply full night mode settings - dark atmosphere with player torch
-   */
-  private applyNightMode(): void {
-    const preset = getPreset(this.currentVisualPreset);
-    const night = preset.night;
-
-    // === SKY - Dark ===
-    if (this.skySystem) {
-      this.skySystem.setZenithColor(night.skyZenithColor);
-      this.skySystem.setHorizonColor(night.skyHorizonColor);
-      this.skySystem.setSunIntensity(0.05);
-      this.skySystem.setCloudOpacity(0.2);
-      this.skySystem.setCloudColor(night.skyHorizonColor);
-    }
-
-    // === FOG - Dense and dark ===
-    this.sceneConfig.applySettings({
-      backgroundColor: night.fogColor,
-      fog: {
-        enabled: true,
-        color: night.fogColor,
-        near: night.fogNear,
-        far: night.fogFar,
-      },
-    });
-
-    // === LIGHTING - Dimmed ===
-    if (this.lights) {
-      this.lights.ambientLight.intensity = night.ambientIntensity;
-      this.lights.ambientLight.color.setHex(night.ambientColor);
-      this.lights.hemisphereLight.intensity = night.ambientIntensity * 1.2;
-      this.lights.hemisphereLight.color.setHex(night.ambientColor);
-      this.lights.hemisphereLight.groundColor.setHex(night.fogColor);
-      this.lights.directionalLight.intensity = night.directionalIntensity;
-      this.lights.directionalLight.color.setHex(night.directionalColor);
-      this.lights.fillLight.intensity = night.ambientIntensity * 0.5;
-    }
-
-    // === EXPOSURE - Lower for horror atmosphere ===
-    this.renderer.toneMappingExposure = 0.8;
-
-    // === POST-PROCESSING - Vignette effect ===
-    if (this.postProcessing) {
-      this.postProcessing.setRetroEnabled(true);
-      this.postProcessing.setVignetteIntensity(0.6);
-    }
-
-    // === PLAYER LIGHTS - ON ===
-    this.character.setLightEnabled(true, {
-      color: night.playerLightColor,
-      intensity: night.playerLightIntensity,
-      distance: night.playerLightDistance,
-    });
-    this.createFirstPersonLight(night.playerLightColor, night.playerLightIntensity, night.playerLightDistance);
-
-    // === UPDATE UI ===
-    this.performancePanel?.setRetroState(true);
-  }
-
-  /**
-   * Create first-person flashlight attached to camera
-   */
-  private createFirstPersonLight(color: number, intensity: number, distance: number): void {
-    // Remove existing lights
-    this.removeFirstPersonLight();
-
-    // Create spotlight for flashlight beam
-    this.firstPersonLight = new THREE.SpotLight(color, intensity * 1.5, distance * 1.2, Math.PI / 5, 0.4, 1.0);
-    this.firstPersonLight.position.set(0, 0, 0);
-    this.camera.add(this.firstPersonLight);
-    this.camera.add(this.firstPersonLight.target);
-    this.firstPersonLight.target.position.set(0, -0.5, -10); // Point forward and slightly down
-
-    // Create small ambient light for immediate area
-    this.firstPersonAmbient = new THREE.PointLight(color, intensity * 0.3, distance * 0.4, 1.0);
-    this.firstPersonAmbient.position.set(0, 0, 0);
-    this.camera.add(this.firstPersonAmbient);
-
-    // Create fog particles for first-person view
-    this.createFirstPersonParticles(color, distance);
-
-    // Make sure camera is in scene
-    if (!this.camera.parent) {
-      this.scene.add(this.camera);
-    }
-  }
-
-  /**
-   * Create fog particles for first-person flashlight
-   */
-  private createFirstPersonParticles(color: number, distance: number): void {
-    const particleCount = 100;
-    const positions = new Float32Array(particleCount * 3);
-    this.firstPersonParticleVelocities = new Float32Array(particleCount * 3);
-
-    // Distribute particles in front of camera in a cone shape
-    for (let i = 0; i < particleCount; i++) {
-      const t = Math.random();
-      const z = -(t * distance * 0.8 + 1); // Negative Z is forward
-      const radius = Math.abs(z) * 0.3;
-      const angle = Math.random() * Math.PI * 2;
-
-      positions[i * 3] = Math.cos(angle) * radius * Math.random();
-      positions[i * 3 + 1] = Math.sin(angle) * radius * Math.random() - 0.2;
-      positions[i * 3 + 2] = z;
-
-      // Random drift velocities
-      this.firstPersonParticleVelocities[i * 3] = (Math.random() - 0.5) * 0.015;
-      this.firstPersonParticleVelocities[i * 3 + 1] = (Math.random() - 0.5) * 0.012;
-      this.firstPersonParticleVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.008;
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    const material = new THREE.PointsMaterial({
-      color: color,
-      size: 0.12,
-      transparent: true,
-      opacity: 0.35,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      sizeAttenuation: true,
-    });
-
-    this.firstPersonParticles = new THREE.Points(geometry, material);
-    this.camera.add(this.firstPersonParticles);
-  }
-
-  /**
-   * Update first-person fog particles
-   */
-  private updateFirstPersonParticles(deltaTime: number): void {
-    if (!this.firstPersonParticles || !this.firstPersonParticleVelocities) return;
-
-    const positions = this.firstPersonParticles.geometry.attributes.position as THREE.BufferAttribute;
-    const count = positions.count;
-
-    for (let i = 0; i < count; i++) {
-      // Update position with velocity
-      positions.array[i * 3] += this.firstPersonParticleVelocities[i * 3] * deltaTime * 60;
-      positions.array[i * 3 + 1] += this.firstPersonParticleVelocities[i * 3 + 1] * deltaTime * 60;
-      positions.array[i * 3 + 2] += this.firstPersonParticleVelocities[i * 3 + 2] * deltaTime * 60;
-
-      const x = positions.array[i * 3];
-      const y = positions.array[i * 3 + 1];
-      const z = positions.array[i * 3 + 2];
-
-      // Reset if particle drifts too far
-      const dist = Math.sqrt(x * x + y * y);
-      const maxRadius = Math.abs(z) * 0.35;
-
-      if (dist > maxRadius || z > -0.5 || z < -18) {
-        const t = Math.random();
-        const newZ = -(t * 15 + 1);
-        const radius = Math.abs(newZ) * 0.25 * Math.random();
-        const angle = Math.random() * Math.PI * 2;
-
-        positions.array[i * 3] = Math.cos(angle) * radius;
-        positions.array[i * 3 + 1] = Math.sin(angle) * radius - 0.2;
-        positions.array[i * 3 + 2] = newZ;
-      }
-    }
-
-    positions.needsUpdate = true;
-  }
-
-  /**
-   * Remove first-person lights and particles
-   */
-  private removeFirstPersonLight(): void {
-    if (this.firstPersonLight) {
-      this.camera.remove(this.firstPersonLight.target);
-      this.camera.remove(this.firstPersonLight);
-      this.firstPersonLight.dispose();
-      this.firstPersonLight = null;
-    }
-    if (this.firstPersonAmbient) {
-      this.camera.remove(this.firstPersonAmbient);
-      this.firstPersonAmbient.dispose();
-      this.firstPersonAmbient = null;
-    }
-    if (this.firstPersonParticles) {
-      this.camera.remove(this.firstPersonParticles);
-      this.firstPersonParticles.geometry.dispose();
-      (this.firstPersonParticles.material as THREE.Material).dispose();
-      this.firstPersonParticles = null;
-      this.firstPersonParticleVelocities = null;
-    }
   }
 
   // ============================================
@@ -1252,7 +757,7 @@ class Game {
       inputManager: this.inputManager,
     });
     this.buildModeManager.setCallbacks({
-      onBlockPlaced: (x, y, z, blockId) => this.sendBlockPlacedToServer(x, y, z, blockId),
+      onBlockPlaced: (x, y, z, blockId) => this.multiplayerManager?.sendBlockPlaced(x, y, z, blockId),
     });
 
     // Initialize SelectionManager
@@ -1260,11 +765,23 @@ class Game {
       placementSystem: this.placementSystem,
     });
     this.selectionManager.setCallbacks({
-      onBlockRemoved: (x, y, z) => this.sendBlockRemovedToServer(x, y, z),
+      onBlockRemoved: (x, y, z) => this.multiplayerManager?.sendBlockRemoved(x, y, z),
       onEnterPasteMode: () => this.buildModeManager?.enterPasteMode(),
     });
 
-    // Wire up systems after prefabCaptureSystem is created (done in initialize)
+    // Initialize MultiplayerManager
+    this.multiplayerManager = new MultiplayerManager({
+      scene: this.scene,
+      placementSystem: this.placementSystem,
+      playerController: this.playerController,
+      cameraSystem: this.cameraSystem,
+      character: this.character,
+      inputManager: this.inputManager,
+    });
+    this.multiplayerManager.setCallbacks({
+      onLoadSavedGame: () => this.loadSavedGame(),
+      onUpdateSaveButtonState: () => this.updateSaveButtonState(),
+    });
   }
 
   /**
@@ -1285,6 +802,9 @@ class Game {
       character: this.character,
       performancePanel: this.performancePanel,
     });
+
+    // Wire up multiplayer manager with UI
+    this.multiplayerManager?.setUIManager(this.uiManager);
   }
 
   async initialize(): Promise<void> {
@@ -1480,7 +1000,7 @@ class Game {
 
     // Set preset change handler for visual themes
     this.performancePanel.setPresetChangeHandler((preset: VisualPreset) => {
-      this.applyVisualPreset(preset);
+      this.lightingManager?.applyVisualPreset(preset);
       // Update retro toggle state based on preset
       if (this.performancePanel) {
         const presetConfig = getPreset(preset);
@@ -1490,7 +1010,7 @@ class Game {
 
     // Set brightness change handler
     this.performancePanel.setBrightnessChangeHandler((brightness: number) => {
-      this.setGlobalBrightness(brightness);
+      this.lightingManager?.setGlobalBrightness(brightness);
     });
 
     // Set retro toggle handler
@@ -1529,7 +1049,7 @@ class Game {
 
     // Set day/night toggle handler
     this.performancePanel.setDayNightToggleHandler((isNight: boolean) => {
-      this.setNightMode(isNight);
+      this.lightingManager?.setNightMode(isNight);
     });
 
     // Set selection action callbacks (using SelectionManager)
@@ -1552,279 +1072,10 @@ class Game {
 
     // Initialize multiplayer first - if server connects, it will provide world state
     // and we skip local loading to avoid sync issues
-    this.initializeNetworking();
+    this.multiplayerManager?.initialize();
   }
 
-  /**
-   * Initialize networking for multiplayer
-   */
-  private initializeNetworking(): void {
-    // Use WebSocket server URL from environment (empty = no game server)
-    const serverUrl = import.meta.env.VITE_SOCKET_URL || "";
-    const worldId = getWorldId();
-    const isDevMode = import.meta.env.VITE_DEV_MODE === "true";
-
-    // If no world ID, skip server connection and use single player mode
-    if (!worldId) {
-      console.log("No world ID, entering single player mode");
-      stateManager.setConnectionMode("single-player");
-      this.loadSavedGame();
-      return;
-    }
-
-    // If dev mode enabled, skip game server and save directly to Strapi
-    if (isDevMode) {
-      console.log("Dev mode enabled, entering builder mode (saves directly to Strapi)");
-      stateManager.setConnectionMode("dev");
-      this.loadSavedGame();
-      return;
-    }
-
-    // If no game server URL configured, go straight to explorer mode
-    if (!serverUrl) {
-      console.log("No game server URL configured, entering explorer mode");
-      stateManager.setConnectionMode("explorer");
-      this.loadSavedGame();
-      return;
-    }
-
-    this.networkManager = new NetworkManager({
-      serverUrl,
-      worldId,
-
-      onConnected: (playerId, _color, state) => {
-        this.localPlayerId = playerId;
-        this.isMultiplayer = true;
-        console.log(`Connected as ${playerId}`);
-        stateManager.setConnectionMode("online");
-        this.uiManager?.showMessage(`Multiplayer connected as ${playerId}`, 3000);
-
-        // Update UI to reflect online status
-        this.updateSaveButtonState();
-
-        // Sync local player position with server-assigned position
-        this.playerController.setPosition(
-          state.position.x,
-          state.position.y,
-          state.position.z
-        );
-        this.playerController.setRotation(state.rotation);
-
-        // Update character visual to match
-        const pos = this.playerController.getPosition();
-        this.character.setPositionFromVector(pos);
-        this.character.setRotation(state.rotation);
-
-        // Update camera to follow new position
-        this.cameraSystem.setPlayerPosition(pos);
-
-        // Clear local blocks - server world will be loaded via onWorldState
-        this.placementSystem.clearAll();
-      },
-
-      onDisconnected: async () => {
-        const wasIntentional = this.intentionalDisconnect;
-        this.isMultiplayer = false;
-        this.localPlayerId = null;
-        this.intentionalDisconnect = false; // Reset flag
-        console.log("Disconnected from server");
-
-        // Remove all remote players
-        for (const [, remotePlayer] of this.remotePlayers) {
-          remotePlayer.dispose(this.scene);
-        }
-        this.remotePlayers.clear();
-
-        // If intentional disconnect (user clicked Leave), switch to single player
-        if (wasIntentional) {
-          console.log("Intentional disconnect, switching to single player mode");
-          stateManager.setConnectionMode("single-player");
-          return;
-        }
-
-        // Check if we have a world ID - if so, enter explorer mode (read-only)
-        const worldId = getWorldId();
-        if (worldId) {
-          // Has world ID but server unavailable - enter Explorer Mode (read-only)
-          console.log("Game server unavailable, entering Explorer Mode (read-only)");
-          stateManager.setConnectionMode("explorer");
-          this.uiManager?.showMessage("Explorer Mode - Changes will be lost on refresh", 5000);
-          await this.loadSavedGame();
-        } else {
-          // No world ID - pure single player mode
-          console.log("No world ID, entering single player mode");
-          stateManager.setConnectionMode("single-player");
-          await this.loadSavedGame();
-        }
-      },
-
-      onJoinError: (message: string) => {
-        this.uiManager?.showMessage(`Failed to join world: ${message}`, 4000);
-      },
-
-      onPlayerJoined: (player: NetworkPlayer) => {
-        this.addRemotePlayer(player);
-        this.uiManager?.showMessage(`${player.playerId} joined`, 2000);
-      },
-
-      onPlayerLeft: (playerId: string) => {
-        this.removeRemotePlayer(playerId);
-        this.uiManager?.showMessage(`${playerId} left`, 2000);
-      },
-
-      onPlayerStateUpdate: (playerId: string, state: PlayerState, timestamp: number) => {
-        // Check if this is our own state (server reconciliation)
-        if (playerId === this.localPlayerId) {
-          // Apply server-authoritative position to prevent drift
-          this.playerController.setPosition(
-            state.position.x,
-            state.position.y,
-            state.position.z
-          );
-          this.playerController.setRotation(state.rotation);
-
-          // Update character visual
-          const pos = this.playerController.getPosition();
-          this.character.setPositionFromVector(pos);
-          this.character.setRotation(state.rotation);
-
-          // Update camera to follow
-          this.cameraSystem.setPlayerPosition(pos);
-          return;
-        }
-
-        // Remote player update
-        const remotePlayer = this.remotePlayers.get(playerId);
-        if (remotePlayer) {
-          remotePlayer.receiveState(state, timestamp);
-        }
-      },
-
-      onBlockPlaced: (playerId: string, block: NetworkBlock) => {
-        // Only process blocks from other players
-        if (playerId !== this.localPlayerId) {
-          this.placementSystem.placeBlockFromNetwork(
-            block.x,
-            block.y,
-            block.z,
-            block.structureId,
-            block.rotation,
-            block.material
-          );
-        }
-      },
-
-      onBlockRemoved: (playerId: string, x: number, y: number, z: number) => {
-        // Only process removals from other players
-        if (playerId !== this.localPlayerId) {
-          this.placementSystem.removeBlockAt(x, y, z);
-        }
-      },
-
-      onWorldReset: (playerId: string) => {
-        // Clear all blocks when another player resets the world
-        if (playerId !== this.localPlayerId) {
-          this.placementSystem.clearAll();
-          this.uiManager?.showMessage(`World reset by ${playerId}`, 3000);
-        }
-      },
-
-      onWorldState: (blocks: NetworkBlock[], players: NetworkPlayer[]) => {
-        // Load existing blocks from server
-        for (const block of blocks) {
-          this.placementSystem.placeBlockFromNetwork(
-            block.x,
-            block.y,
-            block.z,
-            block.structureId,
-            block.rotation,
-            block.material
-          );
-        }
-
-        // Add existing players
-        for (const player of players) {
-          this.addRemotePlayer(player);
-        }
-
-        console.log(`Loaded ${blocks.length} blocks and ${players.length} players from server`);
-      },
-
-      onWorldSaved: (success: boolean, message?: string) => {
-        if (success) {
-          const blockCount = this.placementSystem.exportBlocks().length;
-          this.uiManager?.showMessage(`Saved ${blockCount} blocks to cloud`, 2000);
-        } else {
-          this.uiManager?.showMessage(message || "Failed to save to cloud", 3000);
-        }
-      },
-    });
-
-    // Attempt to connect
-    this.networkManager.connect();
-  }
-
-  /**
-   * Add a remote player to the scene
-   */
-  private addRemotePlayer(player: NetworkPlayer): void {
-    if (this.remotePlayers.has(player.playerId)) {
-      return; // Already exists
-    }
-
-    const remotePlayer = new RemotePlayer(
-      this.scene,
-      player.playerId,
-      player.state,
-      { color: player.color }
-    );
-
-    this.remotePlayers.set(player.playerId, remotePlayer);
-    console.log(`Added remote player: ${player.playerId}`);
-  }
-
-  /**
-   * Remove a remote player from the scene
-   */
-  private removeRemotePlayer(playerId: string): void {
-    const remotePlayer = this.remotePlayers.get(playerId);
-    if (remotePlayer) {
-      remotePlayer.dispose(this.scene);
-      this.remotePlayers.delete(playerId);
-      console.log(`Removed remote player: ${playerId}`);
-    }
-  }
-
-  /**
-   * Send local player inputs to server
-   */
-  private sendInputsToServer(): void {
-    if (!this.networkManager || !this.isMultiplayer) return;
-
-    // Gather current input state
-    this.networkManager.updateInputs({
-      moveForward: this.inputManager.isActionActive("moveForward"),
-      moveBackward: this.inputManager.isActionActive("moveBackward"),
-      moveLeft: this.inputManager.isActionActive("moveLeft"),
-      moveRight: this.inputManager.isActionActive("moveRight"),
-      jetpackUp: this.inputManager.isActionActive("jetpackUp"),
-      jetpackDown: this.inputManager.isActionActive("jetpackDown"),
-      sprint: this.inputManager.isKeyPressed("shift"),
-      hoverMode: this.playerController.isHoverMode(),
-    });
-
-    // Send camera yaw for server-side movement calculation
-    this.networkManager.setCameraYaw(this.cameraSystem.getYaw());
-  }
-
-  /**
-   * Update all remote players (interpolation)
-   */
-  private updateRemotePlayers(deltaTime: number): void {
-    for (const [, remotePlayer] of this.remotePlayers) {
-      remotePlayer.update(deltaTime);
-    }
-  }
+  // Networking is now handled by MultiplayerManager
 
   private setupSaveControls(): void {
     const saveBtn = document.getElementById("save-btn");
@@ -1857,13 +1108,14 @@ class Game {
   private async saveCurrentGame(): Promise<void> {
     const blocks = this.placementSystem.exportBlocks() as SavedBlock[];
     const connectionMode = stateManager.getConnectionMode();
-    console.log(`Saving ${blocks.length} blocks, mode=${connectionMode}, isMultiplayer=${this.isMultiplayer}`);
+    const isMultiplayer = this.multiplayerManager?.isInMultiplayerMode() ?? false;
+    console.log(`Saving ${blocks.length} blocks, mode=${connectionMode}, isMultiplayer=${isMultiplayer}`);
 
-    if (connectionMode === "online" && this.isMultiplayer && this.networkManager) {
+    if (connectionMode === "online" && isMultiplayer) {
       // Online mode: request server to save to Strapi
       console.log("Requesting server to save...");
       this.uiManager?.showMessage("Saving to cloud...", 1000);
-      this.networkManager.sendWorldSave();
+      this.multiplayerManager?.sendWorldSave();
       return;
     }
 
@@ -1958,9 +1210,7 @@ class Game {
     deleteSave();
 
     // If multiplayer, tell server to reset too
-    if (this.isMultiplayer && this.networkManager) {
-      this.networkManager.sendWorldReset();
-    }
+    this.multiplayerManager?.sendWorldReset();
 
     this.uiManager?.showMessage("World reset", 2000);
     this.updateSaveButtonState();
@@ -1969,10 +1219,11 @@ class Game {
   private updateSaveButtonState(): void {
     const saveBtn = document.getElementById("save-btn");
     const clearLocalBtn = document.getElementById("clear-local-btn");
+    const isMultiplayer = this.multiplayerManager?.isInMultiplayerMode() ?? false;
 
     if (saveBtn) {
       // Update button text to show connection status (cloud if multiplayer, local if offline)
-      const icon = this.isMultiplayer ? "☁️" : "💾";
+      const icon = isMultiplayer ? "☁️" : "💾";
       saveBtn.textContent = `${icon} Save`;
 
       if (hasSave()) {
@@ -1984,7 +1235,7 @@ class Game {
 
     // Hide clear local button when online
     if (clearLocalBtn) {
-      clearLocalBtn.style.display = this.isMultiplayer ? "none" : "block";
+      clearLocalBtn.style.display = isMultiplayer ? "none" : "block";
     }
   }
 
@@ -2024,32 +1275,19 @@ class Game {
       this.character.setPositionFromVector(playerPos);
       this.character.setRotation(this.playerController.getRotation());
 
-      // Update fog particles if in night mode
-      if (this.isNightMode) {
-        // Third-person: show character's fog particles, hide first-person particles
-        // First-person: hide character's fog particles, show first-person particles
-        if (cameraMode === "first-person") {
-          this.updateFirstPersonParticles(deltaTime);
-          if (this.firstPersonParticles) this.firstPersonParticles.visible = true;
-        } else {
-          this.character.updateFogParticles(deltaTime);
-          if (this.firstPersonParticles) this.firstPersonParticles.visible = false;
-        }
-      } else {
-        // Day mode - ensure all fog particles are hidden
-        if (this.firstPersonParticles) this.firstPersonParticles.visible = false;
-      }
+      // Update night mode particles (handled by LightingManager)
+      this.lightingManager?.updateNightParticles(deltaTime, cameraMode);
 
       // Update camera to follow player
       this.cameraSystem.setPlayerPosition(playerPos);
       this.cameraSystem.update(deltaTime);
 
       // Send inputs to server for multiplayer
-      this.sendInputsToServer();
+      this.multiplayerManager?.sendInputsToServer();
     }
 
     // Update remote players (interpolation)
-    this.updateRemotePlayers(deltaTime);
+    this.multiplayerManager?.updateRemotePlayers(deltaTime);
 
     // Update water animation
     this.waterSystem?.update(deltaTime);

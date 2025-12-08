@@ -1,124 +1,134 @@
-# Three.js Multiplayer Game Project
+# CLAUDE.md
 
-## Project Structure
-
-```
-three-js/
-├── game-client/          # Three.js game client (Vite + TypeScript)
-├── game-server/          # WebSocket multiplayer server (standalone)
-├── game-data-server/     # Strapi CMS for world persistence
-└── getting-started/      # Development workspace (this folder)
-```
-
-## Architecture
-
-### Game Client (`game-client/`)
-- **Framework**: Three.js with TypeScript, Vite bundler
-- **Post-processing**: EffectComposer with custom shaders
-- **Visual Presets**: Default, Matrix, Tron (configurable lighting/colors)
-- **Custom Effects**: RetroShader (pixelation, scanlines, chromatic aberration, film grain)
-- **Systems**: SkySystem, WaterSystem, PlacementSystem (block building)
-- **Multiplayer**: WebSocket client connecting to game-server
-- **UI**: PerformancePanel with toggles for brightness, Retro FX, Post FX, Sky, Water
-
-### Game Server (`game-server/`)
-- **Runtime**: Node.js with TypeScript (tsx for dev)
-- **WebSocket**: `ws` library for real-time multiplayer
-- **Physics**: Server-authoritative movement with collision detection
-- **Persistence**: Saves world state to Strapi CMS
-- **Shared Types**: `src/shared/NetworkProtocol.ts`, `src/shared/PlayerState.ts`
-
-**Environment Variables:**
-- `PORT` - Server port (default: 3001)
-- `STRAPI_URL` - Strapi CMS URL (default: http://localhost:1337)
-
-**Scripts:**
-```bash
-npm run dev    # Development with hot reload
-npm run build  # TypeScript build
-npm start      # Production
-```
-
-### Game Data Server (`game-data-server/`)
-- **CMS**: Strapi v5
-- **Purpose**: World saves persistence, game configuration
-- **API**: REST endpoints at `/api/saves`
-
-## Key Files
-
-### Client
-- `src/main.ts` - Game entry point, system initialization
-- `src/rendering/PostProcessing.ts` - EffectComposer, RetroShader, visual presets
-- `src/ui/PerformancePanel.ts` - UI controls (brightness, toggles)
-- `src/systems/SkySystem.ts` - Skybox with clouds
-- `src/systems/WaterSystem.ts` - Water plane with reflections
-- `src/network/NetworkProtocol.ts` - Shared message types
-- `src/network/NetworkManager.ts` - WebSocket client
-
-### Server
-- `src/GameServer.ts` - Main WebSocket server, physics, world sync
-- `src/shared/NetworkProtocol.ts` - Message types (copy of client's)
-- `src/shared/PlayerState.ts` - Player state interface
-
-## Deployment Strategy
-
-| Service | Platform | Notes |
-|---------|----------|-------|
-| Game Client | Netlify | Static build, set `VITE_SOCKET_URL` |
-| Game Server | Railway/Render | WebSocket support, set `PORT`, `STRAPI_URL` |
-| Strapi CMS | Strapi Cloud | Database included |
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Development Commands
 
 ```bash
-# Client
-cd game-client
+# Run all services concurrently (client @ 5200, server @ 3001, Strapi @ 1337)
 npm run dev
 
-# Server
-cd game-server
-npm run dev
+# Run individual services
+npm run dev:client    # Game client only
+npm run dev:server    # Game server only
+npm run dev:strapi    # Strapi CMS only
 
-# Strapi
-cd game-data-server
-npm run develop
+# Install all dependencies
+npm run install:all
 ```
 
-## Visual Effects System
+### Per-Package Commands
 
-### RetroShader Features
-- Pixelation (configurable resolution)
-- Scanlines with adjustable intensity
-- Color banding (reduced color palette)
-- Chromatic aberration
-- Vignette
-- Film grain
+**Game Client** (`game-client/`):
+```bash
+npm run dev       # Vite dev server on port 5200
+npm run build     # Production build to dist/
+npm run preview   # Preview production build
+npm run deploy    # Build and deploy to Netlify
+```
 
-### Performance Panel Controls
-- Brightness slider (0.2 - 2.0)
-- Retro FX toggle
-- Post FX toggle (disables all post-processing)
-- Sky toggle
-- Water toggle
+**Game Server** (`game-server/`):
+```bash
+npm run dev       # tsx watch with hot reload
+npm run build     # TypeScript compilation to dist/
+npm start         # Production server
+```
 
-## Multiplayer Protocol
+**Strapi CMS** (`game-data-server/`):
+```bash
+npm run develop   # Dev server with hot reload
+npm run build     # Build admin panel
+npm start         # Production
+```
 
-Messages flow: Client → Server → Broadcast to all clients
+## Architecture Overview
 
-**Client Messages:**
-- `client:join` - Join world with worldId
-- `player:input` - Movement inputs
-- `block:placed` / `block:removed` - Building
-- `world:save` / `world:reset` - World management
+This is a monorepo with three independent services:
 
-**Server Messages:**
-- `welcome` - Initial state on join
-- `player:state` - Authoritative position updates
-- `player:join` / `player:leave` - Player events
-- `block:placed` / `block:removed` - Block sync
+```
+three-js/
+├── game-client/      # Three.js voxel game (Vite + TypeScript)
+├── game-server/      # WebSocket multiplayer server (Node.js)
+└── game-data-server/ # Strapi v5 CMS for persistence
+```
 
-## Notes
+### Client Architecture (`game-client/src/`)
 
-- Server has duplicate shared types (NetworkProtocol, PlayerState) - keep in sync with client
-- Old server code still exists at `game-client/server/` - can be deleted after verifying new server works
-- Client needs `VITE_SOCKET_URL` env var to connect to deployed server
+**Core Systems** (`core/`):
+- `EventBus.ts` - Singleton pub/sub for loose coupling between systems
+- `StateManager.ts` - Game state (camera mode, build mode, connection mode)
+- `PlayerController.ts` - Movement with gravity, jumping, sprinting, collision
+- `InputManager.ts` - Keyboard/mouse with configurable bindings
+- `SaveSystem.ts` - Local storage and Strapi world saves
+
+**Rendering** (`systems/`):
+- `PostProcessing.ts` - EffectComposer with RetroShader (pixelation, scanlines, chromatic aberration)
+- `VisualPresets.ts` - Default, Matrix, Tron lighting/color presets
+- `SkySystem.ts` - Procedural skybox with animated clouds
+- `WaterSystem.ts` - Water plane with reflections
+- `QualityManager.ts` - Performance scaling
+
+**World/Building** (`structures/`, `grid/`):
+- `PlacementSystem.ts` - Block placement with instanced mesh and greedy meshing
+- `ChunkManager.ts` - Dynamic chunk generation based on render distance
+- `GreedyMesher.ts` - Optimized mesh combining for adjacent blocks
+
+**Multiplayer** (`network/`):
+- `NetworkManager.ts` - WebSocket client with auto-reconnect
+- `NetworkProtocol.ts` - Shared message types (duplicated in server)
+
+**Connection Modes**: `single-player` (local only), `online` (WebSocket), `explorer` (read-only), `dev` (direct Strapi)
+
+### Server Architecture (`game-server/src/`)
+
+- `GameServer.ts` - WebSocket server with server-authoritative physics
+- `shared/NetworkProtocol.ts` - Message types (keep in sync with client)
+- `shared/PlayerState.ts` - Player state interface
+
+**Game Loop**: 20 Hz tick rate. Server processes inputs, updates positions, checks collisions, broadcasts state.
+
+### Multiplayer Protocol
+
+Client → Server:
+- `client:join` (worldId) → `player:input` (movement) → `block:placed/removed`
+
+Server → Client:
+- `welcome` (initial state) → `player:state` (position updates) → `player:join/leave`
+
+## Key Conventions
+
+**Event naming**: `domain:action` format (e.g., `player:joined`, `block:placed`)
+
+**Shared types**: `NetworkProtocol.ts` and `PlayerState.ts` exist in both client and server. When modifying, update both:
+- `game-client/src/network/NetworkProtocol.ts`
+- `game-server/src/shared/NetworkProtocol.ts`
+
+**Coordinates**: Y-up world space. Grid uses cell-based integer positions.
+
+## Environment Variables
+
+**Client** (`.env` with `VITE_` prefix):
+```
+VITE_SOCKET_URL=ws://localhost:3001
+VITE_STRAPI_URL=http://localhost:1337
+VITE_STRAPI_API_TOKEN=your_token
+```
+
+**Server** (`.env`):
+```
+PORT=3001
+STRAPI_URL=http://localhost:1337
+STRAPI_API_TOKEN=your_token
+```
+
+## Deployment
+
+Deploy in order: **Strapi Cloud** → **Railway** (game server) → **Netlify** (client)
+
+| Service | Platform | Config |
+|---------|----------|--------|
+| Client | Netlify | Base: `game-client`, set `VITE_SOCKET_URL` |
+| Server | Railway | Root: `game-server`, set `STRAPI_URL` |
+| Strapi | Strapi Cloud | Root: `game-data-server` |
+
+See `deployment-guide.md` for full instructions.

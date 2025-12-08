@@ -513,9 +513,38 @@ export class LightingManager {
   }
 
   /**
-   * Update first-person fog particles (call in game loop)
+   * Update night mode particles based on camera mode (call in game loop)
+   * Handles switching between first-person and third-person particle systems
    */
-  updateFirstPersonParticles(deltaTime: number): void {
+  updateNightParticles(deltaTime: number, cameraMode: string): void {
+    if (!this.isNightMode) {
+      // Day mode - ensure all fog particles are hidden
+      if (this.firstPersonParticles) {
+        this.firstPersonParticles.visible = false;
+      }
+      return;
+    }
+
+    // Night mode - show appropriate particles based on camera mode
+    if (cameraMode === "first-person") {
+      // First-person: show first-person particles, update them
+      this.updateFirstPersonParticles(deltaTime);
+      if (this.firstPersonParticles) {
+        this.firstPersonParticles.visible = true;
+      }
+    } else {
+      // Third-person: show character's fog particles, hide first-person particles
+      this.character?.updateFogParticles(deltaTime);
+      if (this.firstPersonParticles) {
+        this.firstPersonParticles.visible = false;
+      }
+    }
+  }
+
+  /**
+   * Update first-person fog particles (internal use)
+   */
+  private updateFirstPersonParticles(deltaTime: number): void {
     if (!this.firstPersonParticles || !this.firstPersonParticleVelocities) return;
 
     const positions = this.firstPersonParticles.geometry.attributes.position as THREE.BufferAttribute;

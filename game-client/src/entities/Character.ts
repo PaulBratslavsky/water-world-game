@@ -32,7 +32,7 @@ export class Character {
     this.config = {
       color: 0x00aaff,
       // Player dimensions - exactly 2 blocks tall for clean grid alignment
-      playerHeight: 2.0,
+      playerHeight: 4.0,
       playerWidth: 0.6,
       ...config,
     };

@@ -131,7 +131,7 @@ class Game {
       sprintMultiplier: 2.0,
       gravity: 20,
       jumpForce: 8,
-      playerHeight: 2.0,
+      playerHeight: 4.0,
       maxStepHeight: 1.0,
       cellSize: cellSize,
     });

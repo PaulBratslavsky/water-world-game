@@ -365,6 +365,24 @@ let blockData: BlockData[] = [
     },
     metadata: {},
   },
+  {
+    id: 19,
+    blockId: "block_red_metal",
+    name: "Red Metal",
+    description: "Shiny red metallic block",
+    cells: [{ x: 0, z: 0 }],
+    color: "#e74c3c",
+    height: 1,
+    category: "materials",
+    sortOrder: 19,
+    isActive: true,
+    material: {
+      type: "standard",
+      roughness: 0.2,
+      metalness: 0.9,
+    },
+    metadata: {},
+  },
 ];
 
 // Track if blocks have been loaded from API

@@ -43,7 +43,7 @@ const DEFAULT_CONFIG: CameraSystemConfig = {
   maxDistance: 50,
   zoomSpeed: 3,
   thirdPersonHeight: 3,
-  eyeHeight: 1.7,
+  eyeHeight: 3.6,
   buildCameraSpeed: 15,
   buildCameraHeight: 10, // Height above build level for better overview
   lookSpeed: 0.002,

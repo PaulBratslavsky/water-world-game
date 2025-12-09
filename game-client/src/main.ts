@@ -470,7 +470,7 @@ class Game {
     });
     this.buildModeManager.setCamera(this.camera);
     this.buildModeManager.setCallbacks({
-      onBlockPlaced: (x, y, z, blockId) => this.multiplayerManager?.sendBlockPlaced(x, y, z, blockId),
+      onBlockPlaced: (x, y, z, blockId, material) => this.multiplayerManager?.sendBlockPlaced(x, y, z, blockId, material),
       onBlockRemoved: (x, y, z) => this.multiplayerManager?.sendBlockRemoved(x, y, z),
     });
 

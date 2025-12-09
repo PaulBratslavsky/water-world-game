@@ -1937,9 +1937,9 @@ export class PlacementSystem {
     gridZ: number,
     baseY: number,
     rotation: number
-  ): Array<{ blockId: string; x: number; y: number; z: number }> {
+  ): Array<{ blockId: string; x: number; y: number; z: number; material?: BlockMaterial }> {
     const bounds = this.getPrefabBounds(prefab);
-    const positions: Array<{ blockId: string; x: number; y: number; z: number }> = [];
+    const positions: Array<{ blockId: string; x: number; y: number; z: number; material?: BlockMaterial }> = [];
 
     for (const block of prefab.blocks) {
       const rotated = this.rotateBlockCoords(
@@ -1954,6 +1954,7 @@ export class PlacementSystem {
         x: gridX + rotated.x,
         y: baseY + block.y,
         z: gridZ + rotated.z,
+        material: block.material,
       });
     }
 

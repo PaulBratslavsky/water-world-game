@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { NetworkManager } from "./NetworkManager";
-import { NetworkBlock, NetworkPlayer } from "./NetworkProtocol";
+import { NetworkBlock, NetworkPlayer, NetworkBlockMaterial } from "./NetworkProtocol";
 import { PlayerState } from "../core/PlayerState";
 import { PlacementSystem } from "../structures/PlacementSystem";
 import { PlayerController } from "../core/PlayerController";
@@ -379,7 +379,7 @@ export class MultiplayerManager {
   /**
    * Send block placement to server
    */
-  sendBlockPlaced(x: number, y: number, z: number, blockId: string): void {
+  sendBlockPlaced(x: number, y: number, z: number, blockId: string, material?: NetworkBlockMaterial): void {
     if (this.isMultiplayer && this.networkManager) {
       this.networkManager.sendBlockPlaced({
         x,
@@ -387,6 +387,7 @@ export class MultiplayerManager {
         z,
         structureId: blockId,
         rotation: 0,
+        material,
       });
     }
   }

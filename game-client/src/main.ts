@@ -34,18 +34,7 @@ import { PerformancePanel } from "./ui/PerformancePanel";
 import { QualityManager } from "./systems/QualityManager";
 
 // Save system
-import {
-  saveGame,
-  loadGame,
-  deleteSave,
-  hasSave,
-  SavedBlock,
-  getWorldId,
-  loadFromStrapi,
-  saveToStrapi,
-  saveExplorerGame,
-  clearExplorerSave,
-} from "./core/SaveSystem";
+import { getWorldId, clearExplorerSave } from "./core/SaveSystem";
 
 
 // Managers (refactored)
@@ -53,6 +42,7 @@ import { LightingManager } from "./lighting/LightingManager";
 import { BuildModeManager } from "./build/BuildModeManager";
 import { SelectionManager } from "./build/SelectionManager";
 import { MultiplayerManager } from "./network/MultiplayerManager";
+import { SaveManager } from "./core/SaveManager";
 
 /**
  * Game - Main application class
@@ -94,27 +84,7 @@ class Game {
   private buildModeManager: BuildModeManager | null = null;
   private selectionManager: SelectionManager | null = null;
   private multiplayerManager: MultiplayerManager | null = null;
-
-  // Drag-to-place state for blocks
-  private isDraggingToPlace = false;
-  private lastPlacedGridX = -Infinity;
-  private lastPlacedGridZ = -Infinity;
-
-  // Drag-to-delete state
-  private isDraggingToDelete = false;
-  private lastDeletedGridX = -Infinity;
-  private lastDeletedGridZ = -Infinity;
-
-  // Track if mouse moved (vs just camera rotation)
-  private mouseMovedSinceLastUpdate = false;
-  private lockedGridX = -Infinity;
-  private lockedGridZ = -Infinity;
-
-  // Reusable THREE objects to avoid GC pressure (see r3f pitfalls)
-  private readonly _mouse = new THREE.Vector2();
-  private readonly _raycaster = new THREE.Raycaster();
-  private readonly _groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private readonly _intersectPoint = new THREE.Vector3();
+  private saveManager: SaveManager | null = null;
 
   constructor() {
     // Initialize Three.js
@@ -336,7 +306,7 @@ class Game {
     // Reconnect to server with new world ID
     onEvent("world:connected", async ({ worldId }) => {
       console.log(`World selected: ${worldId}, loading from Strapi...`);
-      this.updateSaveButtonState();
+      this.saveManager?.updateSaveButtonState();
 
       // Load blocks and prefabs from Strapi for online mode
       await Promise.all([loadStructuresFromStrapi(), loadPrefabsFromAPI()]);
@@ -365,7 +335,7 @@ class Game {
 
       // Load personal local saved game from localStorage
       console.log("Loading personal local world for single player mode");
-      this.loadLocalGame();
+      this.saveManager?.loadLocalGame();
 
       console.log("World cleared, now in single player mode");
     });
@@ -429,284 +399,40 @@ class Game {
       }
     });
 
-    // Handle mouse move for placement preview (structures and prefabs)
+    // Handle mouse move for placement preview (delegated to BuildModeManager)
     this.renderer.domElement.addEventListener("mousemove", (e) => {
-      if (stateManager.getCameraMode() !== "build") return;
-
-      // Store screen coordinates for continuous raycast updates during camera movement
-      this.lastMouseScreenX = e.clientX;
-      this.lastMouseScreenY = e.clientY;
-
-      // Mark that mouse actually moved (not just camera rotation)
-      this.mouseMovedSinceLastUpdate = true;
-
-      // Update preview using the shared method
-      this.updatePreviewFromScreenPosition();
+      this.buildModeManager?.handleMouseMove(e.clientX, e.clientY);
     });
 
-    // Handle mousedown for drag-to-place (left click) and drag-to-delete (right click)
+    // Handle mousedown for drag operations (delegated to BuildModeManager)
     this.renderer.domElement.addEventListener("mousedown", (e) => {
-      if (stateManager.getCameraMode() !== "build") return;
-
-      if (e.button === 0) {
-        // Left click - drag to place
-        if (!stateManager.isPlacing()) return;
-        if (this.buildModeManager?.getCurrentPrefab()) return; // Don't drag prefabs
-
-        this.isDraggingToPlace = true;
-        this.lastPlacedGridX = -Infinity;
-        this.lastPlacedGridZ = -Infinity;
-      } else if (e.button === 2) {
-        // Right click - drag to delete
-        this.isDraggingToDelete = true;
-        this.lastDeletedGridX = -Infinity;
-        this.lastDeletedGridZ = -Infinity;
-      }
+      this.buildModeManager?.handleMouseDown(e.button);
     });
 
-    // Handle mouseup to stop dragging
+    // Handle mouseup to stop dragging (delegated to BuildModeManager)
     this.renderer.domElement.addEventListener("mouseup", (e) => {
-      if (e.button === 0) {
-        this.isDraggingToPlace = false;
-      } else if (e.button === 2) {
-        this.isDraggingToDelete = false;
-      }
+      this.buildModeManager?.handleMouseUp(e.button);
     });
 
-    // Also stop dragging if mouse leaves the canvas
+    // Handle mouse leave (delegated to BuildModeManager)
     this.renderer.domElement.addEventListener("mouseleave", () => {
-      this.isDraggingToPlace = false;
-      this.isDraggingToDelete = false;
+      this.buildModeManager?.handleMouseLeave();
     });
 
   }
 
   /**
-   * Update preview positions based on screen coordinates
-   * This is called both from mousemove and from the game loop to keep preview in sync
+   * Handle left click - delegated to BuildModeManager
    */
-  private updatePreviewFromScreenPosition(): void {
-    if (stateManager.getCameraMode() !== "build") return;
-
-    // Get build height for visual positioning
-    // Use shared level when not actively placing, otherwise use the specific placement level
-    const isPlacingStructure = stateManager.isPlacing();
-    const isPlacingPrefab = this.buildModeManager?.getCurrentPrefab() !== null;
-    let buildHeight: number;
-    if (isPlacingPrefab) {
-      buildHeight = this.buildModeManager?.getSharedBuildLevel() ?? 0;
-    } else if (isPlacingStructure) {
-      buildHeight = this.placementSystem.getCurrentBuildLevel();
-    } else {
-      buildHeight = this.buildModeManager?.getSharedBuildLevel() ?? 0;
-    }
-
-    const cellSize = this.chunkManager.getCellSize();
-    let gridX: number;
-    let gridZ: number;
-
-    // Only recalculate grid position if mouse actually moved
-    // This prevents placement from shifting when rotating camera with Q/E
-    if (this.mouseMovedSinceLastUpdate || this.lockedGridX === -Infinity) {
-      // Reuse objects to avoid GC pressure (r3f pitfall #9)
-      this._mouse.set(
-        (this.lastMouseScreenX / window.innerWidth) * 2 - 1,
-        -(this.lastMouseScreenY / window.innerHeight) * 2 + 1
-      );
-
-      this._raycaster.setFromCamera(this._mouse, this.camera);
-
-      // Update ground plane to match current build level
-      this._groundPlane.constant = -buildHeight;
-
-      if (this._raycaster.ray.intersectPlane(this._groundPlane, this._intersectPoint)) {
-        // Track mouse world position for initial prefab placement
-        this.lastMouseWorldX = this._intersectPoint.x;
-        this.lastMouseWorldZ = this._intersectPoint.z;
-
-        gridX = Math.floor(this._intersectPoint.x / cellSize);
-        gridZ = Math.floor(this._intersectPoint.z / cellSize);
-
-        // Lock the grid position
-        this.lockedGridX = gridX;
-        this.lockedGridZ = gridZ;
-      } else {
-        // No intersection, use locked position
-        gridX = this.lockedGridX;
-        gridZ = this.lockedGridZ;
-      }
-
-      // Reset flag after processing
-      this.mouseMovedSinceLastUpdate = false;
-    } else {
-      // Mouse didn't move, use locked grid position
-      gridX = this.lockedGridX;
-      gridZ = this.lockedGridZ;
-
-      // Update world position to match locked grid (for prefab placement)
-      this.lastMouseWorldX = gridX * cellSize + cellSize / 2;
-      this.lastMouseWorldZ = gridZ * cellSize + cellSize / 2;
-    }
-
-    // Skip if no valid grid position
-    if (gridX === -Infinity || gridZ === -Infinity) return;
-
-    const isBuildMode = stateManager.getMode() === "build";
-
-    // Update cursor highlight in build mode
-    if (isBuildMode) {
-      this.buildModeManager?.updateCursorHighlight(gridX, gridZ, buildHeight);
-      this.buildModeManager?.showCursorHighlight();
-    } else {
-      this.buildModeManager?.hideCursorHighlight();
-    }
-
-    if (isPlacingStructure) {
-      // Use world position for preview (uses lastMouseWorldX/Z which are updated correctly)
-      this.placementSystem.updatePreview(this.lastMouseWorldX, this.lastMouseWorldZ);
-
-      // Drag-to-place: place blocks while dragging
-      if (this.isDraggingToPlace) {
-        // Only place if we moved to a new cell
-        if (gridX !== this.lastPlacedGridX || gridZ !== this.lastPlacedGridZ) {
-          const placed = this.placementSystem.confirmPlacement();
-          if (placed) {
-            // Send to server if multiplayer
-            this.sendBlockPlacedToServer(
-              placed.gridX,
-              placed.gridY,
-              placed.gridZ,
-              placed.definition.id
-            );
-            this.lastPlacedGridX = gridX;
-            this.lastPlacedGridZ = gridZ;
-            this.placementSystem.startPlacement(placed.definition);
-          }
-        }
-      }
-    }
-    if (isPlacingPrefab) {
-      this.buildModeManager?.updatePrefabPreview(this.lastMouseWorldX, this.lastMouseWorldZ);
-    }
-
-    // Update paste preview
-    if (this.buildModeManager?.isPasteModeActive()) {
-      this.buildModeManager?.updatePastePreview(gridX, gridZ);
-    }
-
-    // Update prefab capture preview
-    if (stateManager.isPrefabCaptureMode() && this.prefabCaptureSystem) {
-      // For capture, use Y=0 as base - selection will scan all Y levels
-      this.prefabCaptureSystem.updatePreview(gridX, 0, gridZ);
-    }
-
-    // Update level plane in build mode when not placing anything
-    const sharedLevel = this.buildModeManager?.getSharedBuildLevel() ?? 0;
-    if (isBuildMode && !isPlacingStructure && !isPlacingPrefab && !stateManager.isPrefabCaptureMode() && !this.buildModeManager?.isPasteModeActive()) {
-      this.placementSystem.updateLevelPlaneAt(gridX, gridZ, sharedLevel);
-    }
-
-    // Drag-to-delete: remove blocks while dragging with right mouse
-    if (this.isDraggingToDelete && stateManager.getMode() === "build") {
-      if (gridX !== this.lastDeletedGridX || gridZ !== this.lastDeletedGridZ) {
-        // Remove block only on the current build level
-        const blockY = Math.floor(buildHeight);
-        const removed = this.placementSystem.removeBlockAt(gridX, blockY, gridZ);
-        if (removed) {
-          this.sendBlockRemovedToServer(gridX, blockY, gridZ);
-        }
-        this.lastDeletedGridX = gridX;
-        this.lastDeletedGridZ = gridZ;
-      }
-    }
-  }
-
   private handleClick(_data: { worldX: number; worldY: number; worldZ: number; gridX: number; gridY: number; gridZ: number }): void {
-    // Only process clicks in build mode
-    if (stateManager.getCameraMode() !== "build") return;
-
-    const mode = stateManager.getMode();
-
-    if (mode === "build") {
-      // Check for paste mode first
-      if (this.buildModeManager?.isPasteModeActive()) {
-        const cellSize = this.chunkManager.getCellSize();
-        const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-        const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-        this.buildModeManager?.confirmPaste(gridX, gridZ);
-        // Stay in paste mode for multiple pastes - press Escape to exit
-        return;
-      }
-
-      // Check for prefab capture mode first
-      if (stateManager.isPrefabCaptureMode() && this.prefabCaptureSystem) {
-        // Use the same grid calculation as mousemove preview for consistency
-        // This ensures click matches the visual preview exactly
-        const cellSize = this.chunkManager.getCellSize();
-        const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-        const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-        const handled = this.prefabCaptureSystem.handleClick(gridX, 0, gridZ);
-        if (handled) return;
-      }
-
-      // Check for prefab placement
-      if (this.buildModeManager?.getCurrentPrefab()) {
-        // Use the same grid position as the preview (calculated from ground plane intersection)
-        // This ensures placement matches the visual preview exactly
-        const cellSize = this.chunkManager.getCellSize();
-        const gridX = Math.floor(this.lastMouseWorldX / cellSize);
-        const gridZ = Math.floor(this.lastMouseWorldZ / cellSize);
-        this.buildModeManager?.confirmPrefabPlacement(gridX, gridZ);
-        return;
-      }
-
-      // Then check for structure placement
-      if (stateManager.isPlacing()) {
-        const placed = this.placementSystem.confirmPlacement();
-        if (placed) {
-          // Send block to server if multiplayer
-          this.sendBlockPlacedToServer(
-            placed.gridX,
-            placed.gridY,
-            placed.gridZ,
-            placed.definition.id
-          );
-
-          // Keep placing - restart with same structure
-          this.placementSystem.startPlacement(placed.definition);
-        }
-      }
-    }
-    // Note: In move mode, clicking no longer moves the character
-    // Movement is now handled via WASD + PlayerController
+    this.buildModeManager?.handleClick();
   }
 
   /**
-   * Send block placement to server (multiplayer)
+   * Handle right click - delegated to BuildModeManager
    */
-  private sendBlockPlacedToServer(x: number, y: number, z: number, blockId: string): void {
-    this.multiplayerManager?.sendBlockPlaced(x, y, z, blockId);
-  }
-
-  /**
-   * Send block removal to server (multiplayer)
-   */
-  private sendBlockRemovedToServer(x: number, y: number, z: number): void {
-    this.multiplayerManager?.sendBlockRemoved(x, y, z);
-  }
-
   private handleRightClick(data: { gridX: number; gridY: number; gridZ: number }): void {
-    // Only process right clicks in build mode
-    if (stateManager.getCameraMode() !== "build") return;
-
-    // Remove block only on the current build level
-    const removed = this.placementSystem.removeBlockAt(data.gridX, data.gridY, data.gridZ);
-    if (removed) {
-      this.sendBlockRemovedToServer(data.gridX, data.gridY, data.gridZ);
-      // Track this deletion so drag-to-delete doesn't try to delete the same position
-      this.lastDeletedGridX = data.gridX;
-      this.lastDeletedGridZ = data.gridZ;
-    }
+    this.buildModeManager?.handleRightClick(data.gridX, data.gridY, data.gridZ);
   }
 
   private onWindowResize(): void {
@@ -720,20 +446,6 @@ class Game {
   getSceneConfig(): SceneConfig {
     return this.sceneConfig;
   }
-
-  // ============================================
-  // BUILD MODE STATE
-  // ============================================
-
-  // Track last mouse position for prefab initial placement
-  private lastMouseWorldX = 0;
-  private lastMouseWorldZ = 0;
-
-  // Track last mouse screen coordinates for continuous raycast updates
-  private lastMouseScreenX = 0;
-  private lastMouseScreenY = 0;
-
-  // Prefab placement, paste mode, and cursor highlight are now handled by BuildModeManager
 
   /**
    * Initialize the refactored manager modules
@@ -756,8 +468,10 @@ class Game {
       cameraSystem: this.cameraSystem,
       inputManager: this.inputManager,
     });
+    this.buildModeManager.setCamera(this.camera);
     this.buildModeManager.setCallbacks({
       onBlockPlaced: (x, y, z, blockId) => this.multiplayerManager?.sendBlockPlaced(x, y, z, blockId),
+      onBlockRemoved: (x, y, z) => this.multiplayerManager?.sendBlockRemoved(x, y, z),
     });
 
     // Initialize SelectionManager
@@ -779,8 +493,19 @@ class Game {
       inputManager: this.inputManager,
     });
     this.multiplayerManager.setCallbacks({
-      onLoadSavedGame: () => this.loadSavedGame(),
-      onUpdateSaveButtonState: () => this.updateSaveButtonState(),
+      onLoadSavedGame: async () => { await this.saveManager?.loadSavedGame(); },
+      onUpdateSaveButtonState: () => this.saveManager?.updateSaveButtonState(),
+    });
+
+    // Initialize SaveManager
+    this.saveManager = new SaveManager({
+      placementSystem: this.placementSystem,
+    });
+    this.saveManager.setCallbacks({
+      onShowMessage: (msg, duration) => this.uiManager?.showMessage(msg, duration),
+      onSendWorldSave: () => this.multiplayerManager?.sendWorldSave(),
+      onSendWorldReset: () => this.multiplayerManager?.sendWorldReset(),
+      isMultiplayer: () => this.multiplayerManager?.isInMultiplayerMode() ?? false,
     });
   }
 
@@ -903,7 +628,7 @@ class Game {
     });
 
     // Setup save/load buttons first (before UI manager which may trigger world:connected)
-    this.setupSaveControls();
+    this.saveManager?.setupSaveControls();
 
     // Initialize UI and connect block getter
     // UIManager will check for saved world ID and emit world:connected if valid
@@ -1075,169 +800,7 @@ class Game {
     this.multiplayerManager?.initialize();
   }
 
-  // Networking is now handled by MultiplayerManager
-
-  private setupSaveControls(): void {
-    const saveBtn = document.getElementById("save-btn");
-    const resetBtn = document.getElementById("reset-btn");
-    const clearLocalBtn = document.getElementById("clear-local-btn");
-
-    saveBtn?.addEventListener("click", () => {
-      this.saveCurrentGame();
-    });
-
-    resetBtn?.addEventListener("click", () => {
-      if (confirm("Are you sure you want to reset? This will delete all placed blocks.")) {
-        this.resetGame();
-      }
-    });
-
-    clearLocalBtn?.addEventListener("click", () => {
-      if (confirm("Clear locally saved data? This cannot be undone.")) {
-        deleteSave();
-        this.placementSystem.clearAll();
-        this.uiManager?.showMessage("Local save data cleared", 2000);
-        this.updateSaveButtonState();
-      }
-    });
-
-    // Update button state based on save existence
-    this.updateSaveButtonState();
-  }
-
-  private async saveCurrentGame(): Promise<void> {
-    const blocks = this.placementSystem.exportBlocks() as SavedBlock[];
-    const connectionMode = stateManager.getConnectionMode();
-    const isMultiplayer = this.multiplayerManager?.isInMultiplayerMode() ?? false;
-    console.log(`Saving ${blocks.length} blocks, mode=${connectionMode}, isMultiplayer=${isMultiplayer}`);
-
-    if (connectionMode === "online" && isMultiplayer) {
-      // Online mode: request server to save to Strapi
-      console.log("Requesting server to save...");
-      this.uiManager?.showMessage("Saving to cloud...", 1000);
-      this.multiplayerManager?.sendWorldSave();
-      return;
-    }
-
-    if (connectionMode === "dev") {
-      // Dev mode: save directly to Strapi (no game server needed)
-      console.log("Dev mode, saving directly to Strapi");
-      this.uiManager?.showMessage("Saving to Strapi...", 1000);
-      const success = await saveToStrapi(blocks);
-      if (success) {
-        this.uiManager?.showMessage(`Saved ${blocks.length} blocks to Strapi`, 2000);
-      } else {
-        this.uiManager?.showMessage("Failed to save to Strapi", 2000);
-      }
-      return;
-    }
-
-    if (connectionMode === "explorer") {
-      // Explorer mode: save to temp localStorage (will be wiped on leave)
-      console.log("Explorer mode, saving to temp storage");
-      const success = saveExplorerGame(blocks);
-      if (success) {
-        this.uiManager?.showMessage(`Saved ${blocks.length} blocks (temporary)`, 2000);
-      } else {
-        this.uiManager?.showMessage("Failed to save", 2000);
-      }
-      return;
-    }
-
-    // Single player mode: save to personal localStorage
-    console.log("Single player mode, saving to localStorage");
-    const success = saveGame(blocks);
-    if (success) {
-      this.uiManager?.showMessage(`Saved ${blocks.length} blocks locally`, 2000);
-    } else {
-      this.uiManager?.showMessage("Failed to save", 2000);
-    }
-  }
-
-  private async loadSavedGame(): Promise<void> {
-    // When connected to multiplayer, server sends world state via onWorldState callback
-    // For explorer mode (has world ID but no server), try to load from Strapi first
-    const worldId = getWorldId();
-
-    if (worldId) {
-      // Has a world ID - try to load from Strapi (explorer mode)
-      console.log(`Explorer mode with world ID ${worldId} - loading from Strapi...`);
-      const saveData = await loadFromStrapi();
-      if (saveData && saveData.blocks.length > 0) {
-        // Clear existing blocks before loading cloud world
-        this.placementSystem.clearAll();
-
-        const count = this.placementSystem.importBlocks(saveData.blocks);
-        console.log(`Loaded ${count} blocks from Strapi`);
-
-        // Save initial copy to explorer temp storage
-        saveExplorerGame(saveData.blocks);
-
-        this.uiManager?.showMessage(`Explorer Mode: Loaded ${count} blocks from cloud`, 3000);
-        this.updateSaveButtonState();
-        return;
-      }
-    }
-
-    // No world ID or Strapi load failed - load from localStorage
-    this.loadLocalGame();
-  }
-
-  /**
-   * Load game from localStorage only (used for single player mode)
-   */
-  private loadLocalGame(): void {
-    if (hasSave()) {
-      const saveData = loadGame();
-      if (saveData && saveData.blocks.length > 0) {
-        const count = this.placementSystem.importBlocks(saveData.blocks);
-        console.log(`Loaded ${count} blocks from localStorage`);
-        this.uiManager?.showMessage(`Loaded ${count} blocks from local storage`, 3000);
-      } else {
-        this.uiManager?.showMessage("Single player: No saved data", 2000);
-      }
-    } else {
-      this.uiManager?.showMessage("Single player: No saved data", 2000);
-    }
-    this.updateSaveButtonState();
-  }
-
-  private async resetGame(): Promise<void> {
-    // Clear all placed blocks
-    this.placementSystem.clearAll();
-
-    // Only clear localStorage (Strapi world is not deleted)
-    deleteSave();
-
-    // If multiplayer, tell server to reset too
-    this.multiplayerManager?.sendWorldReset();
-
-    this.uiManager?.showMessage("World reset", 2000);
-    this.updateSaveButtonState();
-  }
-
-  private updateSaveButtonState(): void {
-    const saveBtn = document.getElementById("save-btn");
-    const clearLocalBtn = document.getElementById("clear-local-btn");
-    const isMultiplayer = this.multiplayerManager?.isInMultiplayerMode() ?? false;
-
-    if (saveBtn) {
-      // Update button text to show connection status (cloud if multiplayer, local if offline)
-      const icon = isMultiplayer ? "☁️" : "💾";
-      saveBtn.textContent = `${icon} Save`;
-
-      if (hasSave()) {
-        saveBtn.classList.add("saved");
-      } else {
-        saveBtn.classList.remove("saved");
-      }
-    }
-
-    // Hide clear local button when online
-    if (clearLocalBtn) {
-      clearLocalBtn.style.display = isMultiplayer ? "none" : "block";
-    }
-  }
+  // Save/load is now handled by SaveManager
 
   run(): void {
     this.gameLoop();
@@ -1312,7 +875,7 @@ class Game {
     // Update preview position continuously to keep it in sync with camera movement
     // This ensures the ghost preview stays under the mouse cursor even when WASD moves the camera
     if (cameraMode === "build") {
-      this.updatePreviewFromScreenPosition();
+      this.buildModeManager?.updatePreviewFromScreenPosition();
     }
 
     // Update frustum culling for performance (only render visible blocks)

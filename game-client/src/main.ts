@@ -43,6 +43,7 @@ import { BuildModeManager } from "./build/BuildModeManager";
 import { SelectionManager } from "./build/SelectionManager";
 import { MultiplayerManager } from "./network/MultiplayerManager";
 import { SaveManager } from "./core/SaveManager";
+import { StrudelManager } from "./audio/StrudelManager";
 
 /**
  * Game - Main application class
@@ -85,6 +86,7 @@ class Game {
   private selectionManager: SelectionManager | null = null;
   private multiplayerManager: MultiplayerManager | null = null;
   private saveManager: SaveManager | null = null;
+  private strudelManager: StrudelManager | null = null;
 
   constructor() {
     // Initialize Three.js
@@ -798,6 +800,45 @@ class Game {
     // Initialize multiplayer first - if server connects, it will provide world state
     // and we skip local loading to avoid sync issues
     this.multiplayerManager?.initialize();
+
+    // Initialize music system (Strudel)
+    this.setupMusicControls();
+  }
+
+  private setupMusicControls(): void {
+    this.strudelManager = new StrudelManager();
+
+    const toggleBtn = document.getElementById("music-toggle-btn");
+    const volumeSlider = document.getElementById("music-volume") as HTMLInputElement;
+    const volumeLabel = document.getElementById("music-volume-label");
+
+    let isToggling = false; // Prevent rapid clicks
+
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", async () => {
+        if (isToggling) return;
+        isToggling = true;
+        toggleBtn.setAttribute("disabled", "true");
+
+        try {
+          await this.strudelManager?.toggle();
+          const isPlaying = this.strudelManager?.getIsPlaying();
+          toggleBtn.textContent = isPlaying ? "⏹" : "▶";
+          toggleBtn.classList.toggle("playing", isPlaying || false);
+        } finally {
+          isToggling = false;
+          toggleBtn.removeAttribute("disabled");
+        }
+      });
+    }
+
+    if (volumeSlider && volumeLabel) {
+      volumeSlider.addEventListener("input", () => {
+        const volume = parseFloat(volumeSlider.value);
+        this.strudelManager?.setVolume(volume);
+        volumeLabel.textContent = `${Math.round(volume * 100)}%`;
+      });
+    }
   }
 
   // Save/load is now handled by SaveManager

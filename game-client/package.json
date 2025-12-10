@@ -15,6 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@strudel/web": "^1.2.6",
     "three": "^0.181.2",
     "ws": "^8.18.0"
   },

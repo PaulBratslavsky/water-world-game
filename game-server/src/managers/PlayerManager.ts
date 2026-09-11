@@ -25,6 +25,7 @@ export class PlayerManager {
     const player: ConnectedPlayer = {
       ws,
       playerId,
+      worldId: null,
       state,
       color,
       inputs: null,
@@ -39,7 +40,7 @@ export class PlayerManager {
    */
   addPlayer(player: ConnectedPlayer): void {
     this.players.set(player.playerId, player);
-    console.log(`Player joined: ${player.playerId} (${this.players.size} total)`);
+    console.log(`Player joined: ${player.playerId} -> ${player.worldId} (${this.players.size} total)`);
   }
 
   /**
@@ -65,6 +66,13 @@ export class PlayerManager {
   }
 
   /**
+   * Get the players who have joined a given world
+   */
+  getPlayersInWorld(worldId: string): ConnectedPlayer[] {
+    return this.getAllPlayers().filter((player) => player.worldId === worldId);
+  }
+
+  /**
    * Get player count
    */
   getPlayerCount(): number {
@@ -72,11 +80,11 @@ export class PlayerManager {
   }
 
   /**
-   * Get network-serializable player list (for sending to clients)
+   * Get network-serializable players in a world (for sending to clients)
    */
-  getNetworkPlayers(excludeId?: string): NetworkPlayer[] {
+  getNetworkPlayers(worldId: string, excludeId?: string): NetworkPlayer[] {
     const players: NetworkPlayer[] = [];
-    for (const player of this.players.values()) {
+    for (const player of this.getPlayersInWorld(worldId)) {
       if (player.playerId !== excludeId) {
         players.push({
           playerId: player.playerId,

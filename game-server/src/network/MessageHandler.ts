@@ -5,7 +5,8 @@
 import { WebSocket } from "ws";
 import { PlayerManager } from "../managers/PlayerManager.js";
 import { WorldManager } from "../managers/WorldManager.js";
-import { StrapiService } from "../services/StrapiService.js";
+import { WorldRegistry } from "../managers/WorldRegistry.js";
+import { ConnectedPlayer } from "../types/ServerTypes.js";
 import {
   ClientMessage,
   ServerMessage,
@@ -15,24 +16,21 @@ import {
 
 export interface MessageHandlerDeps {
   playerManager: PlayerManager;
-  worldManager: WorldManager;
-  strapiService: StrapiService;
-  broadcast: (msg: ServerMessage, excludeId?: string) => void;
+  worlds: WorldRegistry;
+  broadcastToWorld: (worldId: string, msg: ServerMessage, excludeId?: string) => void;
   send: (ws: WebSocket, msg: ServerMessage) => void;
 }
 
 export class MessageHandler {
   private playerManager: PlayerManager;
-  private worldManager: WorldManager;
-  private strapiService: StrapiService;
-  private broadcast: (msg: ServerMessage, excludeId?: string) => void;
+  private worlds: WorldRegistry;
+  private broadcastToWorld: (worldId: string, msg: ServerMessage, excludeId?: string) => void;
   private send: (ws: WebSocket, msg: ServerMessage) => void;
 
   constructor(deps: MessageHandlerDeps) {
     this.playerManager = deps.playerManager;
-    this.worldManager = deps.worldManager;
-    this.strapiService = deps.strapiService;
-    this.broadcast = deps.broadcast;
+    this.worlds = deps.worlds;
+    this.broadcastToWorld = deps.broadcastToWorld;
     this.send = deps.send;
   }
 
@@ -41,7 +39,10 @@ export class MessageHandler {
    */
   handleMessage(playerId: string, message: ClientMessage): void {
     const player = this.playerManager.getPlayer(playerId);
-    if (!player) return;
+    if (!player?.worldId) return;
+
+    const world = this.worlds.get(player.worldId)?.world;
+    if (!world) return;
 
     switch (message.type) {
       case "player:input":
@@ -49,19 +50,19 @@ export class MessageHandler {
         break;
 
       case "block:placed":
-        this.handleBlockPlaced(playerId, message);
+        this.handleBlockPlaced(playerId, world, message);
         break;
 
       case "block:removed":
-        this.handleBlockRemoved(playerId, message);
+        this.handleBlockRemoved(playerId, world, message);
         break;
 
       case "world:reset":
-        this.handleWorldReset(playerId);
+        this.handleWorldReset(playerId, world);
         break;
 
       case "world:save":
-        this.handleWorldSave(playerId);
+        this.handleWorldSave(player, world);
         break;
 
       case "ping":
@@ -77,85 +78,67 @@ export class MessageHandler {
   /**
    * Handle block placement
    */
-  private handleBlockPlaced(playerId: string, message: BlockPlacedMessage): void {
+  private handleBlockPlaced(playerId: string, world: WorldManager, message: BlockPlacedMessage): void {
     const { block } = message;
 
     // Store block
-    this.worldManager.setBlock(block);
+    world.setBlock(block);
 
-    console.log(`Block placed by ${playerId} at (${block.x}, ${block.y}, ${block.z})`);
+    console.log(`Block placed by ${playerId} in ${world.worldId} at (${block.x}, ${block.y}, ${block.z})`);
 
-    // Broadcast to all players (including sender for confirmation)
+    // Broadcast to all players in the world (including sender for confirmation)
     const broadcastMsg: BlockPlacedMessage = {
       type: "block:placed",
       playerId,
       block,
     };
-    this.broadcast(broadcastMsg);
+    this.broadcastToWorld(world.worldId, broadcastMsg);
   }
 
   /**
    * Handle block removal
    */
-  private handleBlockRemoved(playerId: string, message: BlockRemovedMessage): void {
+  private handleBlockRemoved(playerId: string, world: WorldManager, message: BlockRemovedMessage): void {
     const { position } = message;
 
     // Remove block
-    const removed = this.worldManager.removeBlock(position.x, position.y, position.z);
+    const removed = world.removeBlock(position.x, position.y, position.z);
     if (removed) {
-      console.log(`Block removed by ${playerId} at (${position.x}, ${position.y}, ${position.z})`);
+      console.log(`Block removed by ${playerId} in ${world.worldId} at (${position.x}, ${position.y}, ${position.z})`);
     }
 
-    // Broadcast to all players
+    // Broadcast to all players in the world
     const broadcastMsg: BlockRemovedMessage = {
       type: "block:removed",
       playerId,
       position,
     };
-    this.broadcast(broadcastMsg);
+    this.broadcastToWorld(world.worldId, broadcastMsg);
   }
 
   /**
    * Handle world reset
    */
-  private handleWorldReset(playerId: string): void {
-    const blockCount = this.worldManager.clearAll();
+  private handleWorldReset(playerId: string, world: WorldManager): void {
+    const blockCount = world.clearAll();
 
-    console.log(`World reset by ${playerId} - cleared ${blockCount} blocks`);
+    console.log(`World ${world.worldId} reset by ${playerId} - cleared ${blockCount} blocks`);
 
-    // Broadcast reset to all players
+    // Broadcast reset to all players in the world
     const resetMsg = {
       type: "world:reset" as const,
       playerId,
     };
-    this.broadcast(resetMsg);
+    this.broadcastToWorld(world.worldId, resetMsg);
   }
 
   /**
    * Handle world save request
    */
-  private async handleWorldSave(playerId: string): Promise<void> {
-    const player = this.playerManager.getPlayer(playerId);
-    if (!player) return;
+  private async handleWorldSave(player: ConnectedPlayer, world: WorldManager): Promise<void> {
+    console.log(`World ${world.worldId} save requested by ${player.playerId}`);
 
-    const worldId = this.worldManager.getWorldId();
-    if (!worldId) {
-      this.send(player.ws, {
-        type: "world:saved",
-        success: false,
-        message: "No world ID set",
-      });
-      return;
-    }
-
-    console.log(`World save requested by ${playerId}`);
-
-    const blocks = this.worldManager.getAllBlocks();
-    const success = await this.strapiService.saveWorld(blocks, worldId);
-
-    if (success) {
-      this.worldManager.markClean();
-    }
+    const success = await this.worlds.save(world);
 
     // Send response to the requesting player
     this.send(player.ws, {

@@ -1,33 +1,24 @@
 /**
- * WorldManager - Manages block storage and world state
+ * WorldManager - Manages block storage and state for a single world
  */
 
 import { NetworkBlock } from "../shared/NetworkProtocol.js";
 
 export class WorldManager {
   private blocks: Map<string, NetworkBlock> = new Map();
-  private dirty: boolean = false;
-  private currentWorldId: string | null = null;
+
+  // Bumped on every change. A save records the revision it captured, so edits
+  // made while that save is in flight still count as unsaved afterwards.
+  private revision: number = 0;
+  private savedRevision: number = 0;
+
+  constructor(readonly worldId: string) {}
 
   /**
    * Generate a key for block position
    */
   private getKey(x: number, y: number, z: number): string {
     return `${x},${y},${z}`;
-  }
-
-  /**
-   * Set the current world ID
-   */
-  setWorldId(worldId: string): void {
-    this.currentWorldId = worldId;
-  }
-
-  /**
-   * Get the current world ID
-   */
-  getWorldId(): string | null {
-    return this.currentWorldId;
   }
 
   /**
@@ -39,7 +30,7 @@ export class WorldManager {
       const key = this.getKey(block.x, block.y, block.z);
       this.blocks.set(key, block);
     }
-    this.dirty = false;
+    this.savedRevision = this.revision;
   }
 
   /**
@@ -48,7 +39,7 @@ export class WorldManager {
   setBlock(block: NetworkBlock): void {
     const key = this.getKey(block.x, block.y, block.z);
     this.blocks.set(key, block);
-    this.dirty = true;
+    this.revision++;
   }
 
   /**
@@ -58,7 +49,7 @@ export class WorldManager {
     const key = this.getKey(x, y, z);
     if (this.blocks.has(key)) {
       this.blocks.delete(key);
-      this.dirty = true;
+      this.revision++;
       return true;
     }
     return false;
@@ -86,7 +77,7 @@ export class WorldManager {
   clearAll(): number {
     const count = this.blocks.size;
     this.blocks.clear();
-    this.dirty = true;
+    this.revision++;
     return count;
   }
 
@@ -108,20 +99,22 @@ export class WorldManager {
    * Check if world has unsaved changes
    */
   isDirty(): boolean {
-    return this.dirty;
+    return this.revision !== this.savedRevision;
   }
 
   /**
-   * Mark world as saved (clean)
+   * Capture the current blocks together with the revision they represent
    */
-  markClean(): void {
-    this.dirty = false;
+  snapshot(): { blocks: NetworkBlock[]; revision: number } {
+    return { blocks: this.getAllBlocks(), revision: this.revision };
   }
 
   /**
-   * Mark world as needing save (dirty)
+   * Record that a snapshot taken at `revision` has been persisted
    */
-  markDirty(): void {
-    this.dirty = true;
+  markSaved(revision: number): void {
+    if (revision > this.savedRevision) {
+      this.savedRevision = revision;
+    }
   }
 }

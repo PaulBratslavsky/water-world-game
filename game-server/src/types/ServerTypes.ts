@@ -67,6 +67,8 @@ export interface StrapiSaveListResponse {
 export interface ConnectedPlayer {
   ws: WebSocket;
   playerId: string;
+  // World the player has joined (null until client:join succeeds)
+  worldId: string | null;
   state: PlayerState;
   color: string;
   inputs: PlayerInputMessage["inputs"] | null;

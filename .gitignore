@@ -3,7 +3,8 @@ node_modules/
 
 # Build outputs
 dist/
-build/
+# Root-anchored so it doesn't swallow source folders like game-client/src/build/
+/build/
 
 # Environment files
 .env

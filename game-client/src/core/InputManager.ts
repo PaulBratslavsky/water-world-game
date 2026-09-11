@@ -132,7 +132,7 @@ export class InputManager {
       this.actionsActive.add(action);
     }
 
-    emitEvent("input:keyDown", { key, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey });
+    emitEvent("input:keyDown", { key, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey });
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {

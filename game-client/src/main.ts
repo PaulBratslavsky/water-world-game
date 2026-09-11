@@ -195,7 +195,7 @@ class Game {
     onEvent("input:rightClick", (data) => this.handleRightClick(data));
 
     // Handle key events for structure/prefab rotation and level changes
-    onEvent("input:keyDown", ({ key }) => {
+    onEvent("input:keyDown", ({ key, ctrlKey, metaKey }) => {
       if (key === "r") {
         if (stateManager.isPlacing()) {
           this.placementSystem.rotatePreview();
@@ -212,11 +212,12 @@ class Game {
       }
 
       // Handle level changes in build mode
-      // Space = level up, Shift = level down (only in build mode)
+      // Space = level up, C or Shift = level down (only in build mode).
+      // C mirrors the jetpack keys (Space/C), which are inactive in build mode.
       if (stateManager.getMode() === "build") {
         if (key === " ") {
           this.buildModeManager?.cycleBuildLevel(1);
-        } else if (key === "shift") {
+        } else if (key === "shift" || (key === "c" && !ctrlKey && !metaKey)) {
           this.buildModeManager?.cycleBuildLevel(-1);
         }
       }

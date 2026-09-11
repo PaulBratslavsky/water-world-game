@@ -1,11 +1,17 @@
 /**
- * Seed script to populate Strapi Cloud with default blocks
+ * Seed script to populate Strapi with default blocks
  *
- * Usage: npx tsx scripts/seed-blocks.ts
+ * Usage: STRAPI_API_TOKEN=... [STRAPI_URL=...] npx tsx scripts/seed-blocks.ts
+ * STRAPI_URL defaults to local Strapi; pass the Cloud URL explicitly to seed production.
  */
 
-const STRAPI_URL = process.env.STRAPI_URL || "https://mindful-growth-1d34faa3a8.strapiapp.com";
-const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN || "a540115ccdfd6053d1db78a2e9d17ec1c8bd85b7be20d400765b25a51f3866f136541591bbc728e4248419c44ad6bb35940e340416135f75ab85d24622edba58867515f5648ed7969239b9dbbdca9c37e91b4dc7f8a1785e7ba2650566076c6e309931fab26d6cb5097891025cdd9d76222a378c97fe661d3e079d13bb94abb6";
+const STRAPI_URL = process.env.STRAPI_URL || "http://localhost:1337";
+const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN;
+
+if (!STRAPI_API_TOKEN) {
+  console.error("STRAPI_API_TOKEN is required");
+  process.exit(1);
+}
 
 interface BlockMaterial {
   type?: string;
@@ -323,7 +329,7 @@ async function createBlock(block: BlockData): Promise<boolean> {
 }
 
 async function main() {
-  console.log("Seeding blocks to Strapi Cloud...");
+  console.log("Seeding blocks to Strapi...");
   console.log(`URL: ${STRAPI_URL}`);
   console.log("");
 

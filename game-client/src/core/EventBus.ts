@@ -113,7 +113,7 @@ export interface GameEvents {
   // Input events
   "input:click": { worldX: number; worldY: number; worldZ: number; gridX: number; gridY: number; gridZ: number };
   "input:rightClick": { worldX: number; worldY: number; worldZ: number; gridX: number; gridY: number; gridZ: number };
-  "input:keyDown": { key: string; shiftKey?: boolean; ctrlKey?: boolean };
+  "input:keyDown": { key: string; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean };
   "input:keyUp": { key: string };
 
   // Character events

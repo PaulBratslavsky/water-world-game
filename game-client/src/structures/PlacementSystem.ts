@@ -378,12 +378,10 @@ export class PlacementSystem {
     );
     this.frustum.setFromProjectionMatrix(this.frustumMatrix);
 
-    if (this.useInstancing) {
-      // For instanced meshes, Three.js handles frustum culling per-instance automatically
-      // when frustumCulled is true (which we set during creation)
-      // We just need to ensure the instanced mesh group is visible
-      this.instancedMeshGroup.visible = true;
-    } else {
+    // Instanced and greedy meshes are frustum-culled by Three.js. Group visibility is
+    // owned by enterRenderMode() / setGrayscaleBelowLevel() - forcing the instanced
+    // group visible here drew every block twice while greedy meshing was active.
+    if (!this.useInstancing) {
       // Non-instanced: check each placed structure against frustum
       for (const structure of this.placedStructures.values()) {
         const isVisible = this.isInFrustum(structure.mesh);

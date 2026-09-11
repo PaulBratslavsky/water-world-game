@@ -350,12 +350,13 @@ export async function saveToStrapi(blocks: SavedBlock[]): Promise<boolean> {
 
 /**
  * Load game from Strapi backend using current world ID
- * Falls back to localStorage if Strapi is unavailable
+ * Returns null if the world can't be loaded. Never falls back to the personal
+ * local save - that would put the single-player world into a cloud world session.
  */
 export async function loadFromStrapi(): Promise<SaveData | null> {
   if (!currentWorldId) {
-    console.warn("No world ID set - falling back to localStorage");
-    return loadGame();
+    console.warn("No world ID set - cannot load from Strapi");
+    return null;
   }
 
   try {
@@ -364,8 +365,8 @@ export async function loadFromStrapi(): Promise<SaveData | null> {
     });
 
     if (!response.ok) {
-      console.warn(`Failed to load world ${currentWorldId}, falling back to localStorage`);
-      return loadGame();
+      console.warn(`Failed to load world ${currentWorldId} (status: ${response.status})`);
+      return null;
     }
 
     const result: StrapiSaveResponse = await response.json();

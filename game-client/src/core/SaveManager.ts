@@ -134,31 +134,36 @@ export class SaveManager {
    */
   async loadSavedGame(): Promise<void> {
     // When connected to multiplayer, server sends world state via onWorldState callback
-    // For explorer mode (has world ID but no server), try to load from Strapi first
     const worldId = getWorldId();
 
-    if (worldId) {
-      // Has a world ID - try to load from Strapi (explorer mode)
-      console.log(`Explorer mode with world ID ${worldId} - loading from Strapi...`);
-      const saveData = await loadFromStrapi();
-      if (saveData && saveData.blocks.length > 0) {
-        // Clear existing blocks before loading cloud world
-        this.placementSystem.clearAll();
-
-        const count = this.placementSystem.importBlocks(saveData.blocks);
-        console.log(`Loaded ${count} blocks from Strapi`);
-
-        // Save initial copy to explorer temp storage
-        saveExplorerGame(saveData.blocks);
-
-        this.onShowMessage?.(`Explorer Mode: Loaded ${count} blocks from cloud`, 3000);
-        this.updateSaveButtonState();
-        return;
-      }
+    // No world ID - single player, load the personal local world
+    if (!worldId) {
+      this.loadLocalGame();
+      return;
     }
 
-    // No world ID or Strapi load failed - load from localStorage
-    this.loadLocalGame();
+    // Has a world ID (explorer/dev mode) - only ever show that cloud world.
+    // Never fall back to the personal local world: a later save could upload it.
+    console.log(`Explorer mode with world ID ${worldId} - loading from Strapi...`);
+    const saveData = await loadFromStrapi();
+
+    // Always clear first so nothing from another world (or the personal one) lingers
+    this.placementSystem.clearAll();
+
+    if (!saveData) {
+      this.onShowMessage?.("Couldn't load this world from the cloud", 4000);
+      this.updateSaveButtonState();
+      return;
+    }
+
+    const count = this.placementSystem.importBlocks(saveData.blocks);
+    console.log(`Loaded ${count} blocks from Strapi`);
+
+    // Save initial copy to explorer temp storage
+    saveExplorerGame(saveData.blocks);
+
+    this.onShowMessage?.(`Explorer Mode: Loaded ${count} blocks from cloud`, 3000);
+    this.updateSaveButtonState();
   }
 
   /**

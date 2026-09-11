@@ -213,6 +213,15 @@ export class MultiplayerManager {
       onPlayerStateUpdate: (playerId: string, state: PlayerState, timestamp: number) => {
         // Check if this is our own state (server reconciliation)
         if (playerId === this.localPlayerId) {
+          // Until the server has applied our teleport, ignore states that still show
+          // the old position - otherwise the player snaps back for a tick or two
+          if (this.pendingTeleport) {
+            const { x, z, expiresAt } = this.pendingTeleport;
+            const arrived = Math.hypot(state.position.x - x, state.position.z - z) < 1;
+            if (!arrived && Date.now() < expiresAt) return;
+            this.pendingTeleport = null;
+          }
+
           // Apply server-authoritative position to prevent drift
           this.playerController.setPosition(
             state.position.x,
@@ -374,6 +383,38 @@ export class MultiplayerManager {
 
     // Send camera yaw for server-side movement calculation
     this.networkManager.setCameraYaw(this.cameraSystem.getYaw());
+  }
+
+  // Where we last teleported to; server states still showing the old position
+  // are ignored until the server catches up (or this expires)
+  private pendingTeleport: { x: number; z: number; expiresAt: number } | null = null;
+
+  /**
+   * Stop server-side movement. The game loop doesn't send inputs in build mode,
+   * so without this the server keeps repeating whatever keys were last held.
+   */
+  clearInputs(): void {
+    if (!this.networkManager || !this.isMultiplayer) return;
+
+    this.networkManager.updateInputs({
+      moveForward: false,
+      moveBackward: false,
+      moveLeft: false,
+      moveRight: false,
+      jetpackUp: false,
+      jetpackDown: false,
+      sprint: false,
+    });
+  }
+
+  /**
+   * Tell the server the player was moved directly (e.g. leaving build mode)
+   */
+  sendTeleport(x: number, y: number, z: number): void {
+    if (!this.networkManager || !this.isMultiplayer) return;
+
+    this.pendingTeleport = { x, z, expiresAt: Date.now() + 1000 };
+    this.networkManager.sendTeleport({ x, y, z });
   }
 
   /**

@@ -12,6 +12,7 @@ import {
   ServerMessage,
   BlockPlacedMessage,
   BlockRemovedMessage,
+  PlayerTeleportMessage,
 } from "../shared/NetworkProtocol.js";
 
 export interface MessageHandlerDeps {
@@ -49,6 +50,10 @@ export class MessageHandler {
         this.playerManager.updatePlayerInputs(playerId, message.inputs);
         break;
 
+      case "player:teleport":
+        this.handleTeleport(player, message);
+        break;
+
       case "block:placed":
         this.handleBlockPlaced(playerId, world, message);
         break;
@@ -73,6 +78,18 @@ export class MessageHandler {
         });
         break;
     }
+  }
+
+  /**
+   * Handle a client-initiated teleport (e.g. leaving build mode at the build cursor)
+   */
+  private handleTeleport(player: ConnectedPlayer, message: PlayerTeleportMessage): void {
+    const { x, y, z } = message.position;
+    if (![x, y, z].every(Number.isFinite)) return;
+
+    player.state.position = { x, y: Math.max(0, y), z };
+    player.state.velocity = { x: 0, y: 0, z: 0 };
+    player.state.isGrounded = false; // let physics settle onto the ground next tick
   }
 
   /**

@@ -36,6 +36,13 @@ export interface PlayerInputMessage {
   timestamp: number;
 }
 
+// Client moved the player directly (e.g. leaving build mode at the build cursor)
+export interface PlayerTeleportMessage {
+  type: "player:teleport";
+  playerId: string;
+  position: Vector3;
+}
+
 // ============================================
 // Block-related messages
 // ============================================
@@ -155,6 +162,7 @@ export interface NetworkPlayer {
 export type ClientMessage =
   | ClientJoinMessage
   | PlayerInputMessage
+  | PlayerTeleportMessage
   | BlockPlacedMessage
   | BlockRemovedMessage
   | WorldResetMessage

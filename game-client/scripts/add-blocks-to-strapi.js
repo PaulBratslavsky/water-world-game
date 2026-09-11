@@ -1,11 +1,17 @@
 /**
  * Script to add block variants to Strapi
  *
- * Usage: node scripts/add-blocks-to-strapi.js
+ * Usage: STRAPI_TOKEN=... [STRAPI_URL=...] node scripts/add-blocks-to-strapi.js
+ * STRAPI_URL defaults to local Strapi; pass the Cloud URL explicitly to target production.
  */
 
-const STRAPI_URL = process.env.STRAPI_URL || "https://mindful-growth-1d34faa3a8.strapiapp.com";
-const STRAPI_TOKEN = process.env.STRAPI_TOKEN || "a540115ccdfd6053d1db78a2e9d17ec1c8bd85b7be20d400765b25a51f3866f136541591bbc728e4248419c44ad6bb35940e340416135f75ab85d24622edba58867515f5648ed7969239b9dbbdca9c37e91b4dc7f8a1785e7ba2650566076c6e309931fab26d6cb5097891025cdd9d76222a378c97fe661d3e079d13bb94abb6";
+const STRAPI_URL = process.env.STRAPI_URL || "http://localhost:1337";
+const STRAPI_TOKEN = process.env.STRAPI_TOKEN;
+
+if (!STRAPI_TOKEN) {
+  console.error("STRAPI_TOKEN is required");
+  process.exit(1);
+}
 
 // Base colors from the existing blocks
 const COLORS = [

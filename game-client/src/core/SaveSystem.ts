@@ -370,7 +370,11 @@ export async function loadFromStrapi(): Promise<SaveData | null> {
     }
 
     const result: StrapiSaveResponse = await response.json();
-    const saveData = result.data.data;
+    const saveData = result.data?.data;
+    if (!Array.isArray(saveData?.blocks)) {
+      console.warn(`World ${currentWorldId} returned no block data`);
+      return null;
+    }
 
     // NOTE: Do NOT cache to LOCAL_SAVE_KEY here!
     // LOCAL_SAVE_KEY is the user's personal single-player world and should never be overwritten
@@ -381,8 +385,10 @@ export async function loadFromStrapi(): Promise<SaveData | null> {
     console.log(`Loaded ${saveData.blocks.length} blocks from world ${currentWorldId}`);
     return saveData;
   } catch (error) {
-    console.warn("Failed to load from Strapi, falling back to localStorage:", error);
-    return loadGame();
+    // Never fall back to the personal local world here: it would be shown
+    // (and could be saved) as if it were this cloud world.
+    console.warn("Failed to load from Strapi:", error);
+    return null;
   }
 }
 

@@ -32,6 +32,10 @@ export class SaveManager {
   private onSendWorldReset: (() => void) | null = null;
   private isMultiplayer: (() => boolean) | null = null;
 
+  // Set when a cloud world failed to load. The scene is empty then, so saving
+  // it would overwrite the shared world with nothing.
+  private cloudLoadFailed = false;
+
   constructor(config: SaveManagerConfig) {
     this.placementSystem = config.placementSystem;
   }
@@ -95,6 +99,11 @@ export class SaveManager {
     }
 
     if (connectionMode === "dev") {
+      if (this.cloudLoadFailed) {
+        this.onShowMessage?.("Can't save: this world didn't load. Rejoin it and try again.", 4000);
+        return;
+      }
+
       // Dev mode: save directly to Strapi (no game server needed)
       console.log("Dev mode, saving directly to Strapi");
       this.onShowMessage?.("Saving to Strapi...", 1000);
@@ -151,11 +160,13 @@ export class SaveManager {
     this.placementSystem.clearAll();
 
     if (!saveData) {
+      this.cloudLoadFailed = true;
       this.onShowMessage?.("Couldn't load this world from the cloud", 4000);
       this.updateSaveButtonState();
       return;
     }
 
+    this.cloudLoadFailed = false;
     const count = this.placementSystem.importBlocks(saveData.blocks);
     console.log(`Loaded ${count} blocks from Strapi`);
 
@@ -170,6 +181,7 @@ export class SaveManager {
    * Load game from localStorage only (used for single player mode)
    */
   loadLocalGame(): void {
+    this.cloudLoadFailed = false;
     if (hasSave()) {
       const saveData = loadGame();
       if (saveData && saveData.blocks.length > 0) {

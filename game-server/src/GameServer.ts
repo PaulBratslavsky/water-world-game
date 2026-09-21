@@ -3,18 +3,16 @@
  *
  * This is a thin orchestrator that wires up specialized modules:
  * - PlayerManager: Player connections and state
- * - WorldManager: Block storage and operations
+ * - WorldRegistry: One WorldManager + CollisionSystem per loaded world
  * - StrapiService: Persistence to Strapi CMS
- * - CollisionSystem: Physics and collision detection
  * - MessageHandler: Client message routing
  */
 
 import { WebSocketServer, WebSocket } from "ws";
 import { SERVER_CONFIG, STRAPI_CONFIG } from "./config/ServerConfig.js";
 import { PlayerManager } from "./managers/PlayerManager.js";
-import { WorldManager } from "./managers/WorldManager.js";
+import { WorldRegistry } from "./managers/WorldRegistry.js";
 import { StrapiService } from "./services/StrapiService.js";
-import { CollisionSystem } from "./physics/CollisionSystem.js";
 import { MessageHandler } from "./network/MessageHandler.js";
 import {
   ServerMessage,
@@ -30,29 +28,27 @@ class GameServer {
 
   // Managers and services
   private playerManager: PlayerManager;
-  private worldManager: WorldManager;
+  private worlds: WorldRegistry;
   private strapiService: StrapiService;
-  private collisionSystem: CollisionSystem;
   private messageHandler: MessageHandler;
 
   // State
   private lastTickTime: number = Date.now();
+  private shuttingDown: boolean = false;
 
   constructor() {
     this.wss = new WebSocketServer({ port: SERVER_CONFIG.port });
 
     // Initialize managers and services
     this.playerManager = new PlayerManager();
-    this.worldManager = new WorldManager();
     this.strapiService = new StrapiService();
-    this.collisionSystem = new CollisionSystem(this.worldManager);
+    this.worlds = new WorldRegistry(this.strapiService);
 
     // Initialize message handler with dependencies
     this.messageHandler = new MessageHandler({
       playerManager: this.playerManager,
-      worldManager: this.worldManager,
-      strapiService: this.strapiService,
-      broadcast: this.broadcast.bind(this),
+      worlds: this.worlds,
+      broadcastToWorld: this.broadcastToWorld.bind(this),
       send: this.send.bind(this),
     });
 
@@ -72,6 +68,7 @@ class GameServer {
   private setupServer(): void {
     this.wss.on("connection", (ws: WebSocket) => {
       const player = this.playerManager.createPlayer(ws);
+      let joining = false;
       let joined = false;
 
       console.log(`WebSocket connected, awaiting join message for ${player.playerId}`);
@@ -82,7 +79,7 @@ class GameServer {
 
           // Handle join message - must be first message
           if (message.type === "client:join") {
-            if (joined) {
+            if (joined || joining) {
               console.log(`${player.playerId} already joined, ignoring duplicate join`);
               return;
             }
@@ -90,9 +87,12 @@ class GameServer {
             const worldId = message.worldId;
             console.log(`${player.playerId} requesting to join world: ${worldId}`);
 
-            // Load world from Strapi
-            const result = await this.strapiService.loadWorld(worldId);
-            if (!result.success) {
+            // Reuse the world if it's already in memory, otherwise load it from Strapi
+            joining = true;
+            const loaded = await this.worlds.acquire(worldId).finally(() => {
+              joining = false;
+            });
+            if (!loaded) {
               this.send(ws, {
                 type: "join:error",
                 message: `World ${worldId} not found`,
@@ -101,11 +101,14 @@ class GameServer {
               return;
             }
 
-            // Load blocks into world manager
-            this.worldManager.setWorldId(worldId);
-            this.worldManager.loadBlocks(result.blocks);
+            // The socket may have closed while the world was loading
+            if (ws.readyState !== WebSocket.OPEN) {
+              console.log(`${player.playerId} disconnected while joining ${worldId}`);
+              return;
+            }
 
             // Add player to manager
+            player.worldId = worldId;
             this.playerManager.addPlayer(player);
             joined = true;
 
@@ -117,20 +120,20 @@ class GameServer {
               state: player.state,
               worldState: {
                 type: "world:state",
-                blocks: this.worldManager.getAllBlocks(),
-                players: this.playerManager.getNetworkPlayers(player.playerId),
+                blocks: loaded.world.getAllBlocks(),
+                players: this.playerManager.getNetworkPlayers(worldId, player.playerId),
               },
             };
             this.send(ws, welcome);
 
-            // Broadcast new player to others
+            // Broadcast new player to others in the same world
             const joinMsg: PlayerJoinMessage = {
               type: "player:join",
               playerId: player.playerId,
               state: player.state,
               color: player.color,
             };
-            this.broadcast(joinMsg, player.playerId);
+            this.broadcastToWorld(worldId, joinMsg, player.playerId);
             return;
           }
 
@@ -147,16 +150,23 @@ class GameServer {
       });
 
       ws.on("close", () => {
-        if (joined) {
-          this.playerManager.removePlayer(player.playerId);
-
-          const leaveMsg: PlayerLeaveMessage = {
-            type: "player:leave",
-            playerId: player.playerId,
-          };
-          this.broadcast(leaveMsg);
-        } else {
+        const worldId = player.worldId;
+        if (!joined || !worldId) {
           console.log(`WebSocket closed before joining: ${player.playerId}`);
+          return;
+        }
+
+        this.playerManager.removePlayer(player.playerId);
+
+        const leaveMsg: PlayerLeaveMessage = {
+          type: "player:leave",
+          playerId: player.playerId,
+        };
+        this.broadcastToWorld(worldId, leaveMsg);
+
+        // Last player out: save the world and drop it from memory
+        if (this.isWorldEmpty(worldId)) {
+          void this.worlds.release(worldId, () => this.isWorldEmpty(worldId));
         }
       });
     });
@@ -175,8 +185,10 @@ class GameServer {
 
   private updatePlayers(deltaTime: number): void {
     for (const player of this.playerManager.getAllPlayers()) {
-      if (!player.inputs) continue;
-      this.collisionSystem.updatePlayerPhysics(player.state, player.inputs, deltaTime);
+      if (!player.inputs || !player.worldId) continue;
+      const loaded = this.worlds.get(player.worldId);
+      if (!loaded) continue;
+      loaded.collision.updatePlayerPhysics(player.state, player.inputs, deltaTime);
     }
   }
 
@@ -184,43 +196,44 @@ class GameServer {
     const now = Date.now();
 
     for (const player of this.playerManager.getAllPlayers()) {
+      if (!player.worldId) continue;
       const stateMsg: PlayerStateMessage = {
         type: "player:state",
         playerId: player.playerId,
         state: player.state,
         timestamp: now,
       };
-      this.broadcast(stateMsg);
+      this.broadcastToWorld(player.worldId, stateMsg);
     }
   }
 
   private setupAutoSave(): void {
-    setInterval(async () => {
-      if (!this.worldManager.isDirty()) return;
-
-      const worldId = this.worldManager.getWorldId();
-      if (!worldId) return;
-
-      const blocks = this.worldManager.getAllBlocks();
-      const success = await this.strapiService.saveWorld(blocks, worldId);
-      if (success) {
-        this.worldManager.markClean();
+    setInterval(() => {
+      for (const { world } of this.worlds.getAll()) {
+        const worldId = world.worldId;
+        if (this.isWorldEmpty(worldId)) {
+          // Nobody is in it (e.g. an earlier save-on-leave failed): retry and unload
+          void this.worlds.release(worldId, () => this.isWorldEmpty(worldId));
+        } else {
+          void this.worlds.save(world);
+        }
       }
     }, STRAPI_CONFIG.saveInterval);
 
-    // Save on process exit
-    process.on("SIGINT", async () => {
-      console.log("\nShutting down...");
-      this.worldManager.markDirty(); // Force save
-
-      const worldId = this.worldManager.getWorldId();
-      if (worldId) {
-        const blocks = this.worldManager.getAllBlocks();
-        await this.strapiService.saveWorld(blocks, worldId);
-      }
-
+    // Save every loaded world before exiting. Railway stops containers with SIGTERM.
+    const shutdown = async (signal: string) => {
+      if (this.shuttingDown) return;
+      this.shuttingDown = true;
+      console.log(`\n${signal} received, saving worlds before shutdown...`);
+      await this.worlds.saveAll();
       process.exit(0);
-    });
+    };
+    process.on("SIGINT", () => void shutdown("SIGINT"));
+    process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  }
+
+  private isWorldEmpty(worldId: string): boolean {
+    return this.playerManager.getPlayersInWorld(worldId).length === 0;
   }
 
   private send(ws: WebSocket, message: ServerMessage): void {
@@ -229,8 +242,8 @@ class GameServer {
     }
   }
 
-  private broadcast(message: ServerMessage, excludeId?: string): void {
-    for (const player of this.playerManager.getAllPlayers()) {
+  private broadcastToWorld(worldId: string, message: ServerMessage, excludeId?: string): void {
+    for (const player of this.playerManager.getPlayersInWorld(worldId)) {
       if (player.playerId !== excludeId) {
         this.send(player.ws, message);
       }

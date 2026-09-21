@@ -376,6 +376,10 @@ class Game {
 
         // Force day mode in build mode (save night state to restore later)
         this.lightingManager?.saveNightStateForBuild();
+
+        // The game loop stops sending inputs in build mode - don't leave the server
+        // repeating whatever movement keys were held when build mode was entered
+        this.multiplayerManager?.clearInputs();
       }
 
       // When exiting build mode, teleport player to the ghost block position
@@ -385,6 +389,8 @@ class Game {
         // Set player position to the build target (ghost block location)
         // Y is set to the build level (top of where blocks would be placed)
         this.playerController.setPosition(buildTarget.x, buildLevel, buildTarget.z);
+        // Tell the server, otherwise its next state update snaps the player back
+        this.multiplayerManager?.sendTeleport(buildTarget.x, buildLevel, buildTarget.z);
 
         const playerPos = this.playerController.getPosition();
         this.cameraSystem.setPlayerPosition(playerPos);

@@ -32,6 +32,10 @@ export class SaveManager {
   private onSendWorldReset: (() => void) | null = null;
   private isMultiplayer: (() => boolean) | null = null;
 
+  // Set when a cloud world failed to load. The scene is empty then, so saving
+  // it would overwrite the shared world with nothing.
+  private cloudLoadFailed = false;
+
   constructor(config: SaveManagerConfig) {
     this.placementSystem = config.placementSystem;
   }
@@ -95,6 +99,11 @@ export class SaveManager {
     }
 
     if (connectionMode === "dev") {
+      if (this.cloudLoadFailed) {
+        this.onShowMessage?.("Can't save: this world didn't load. Rejoin it and try again.", 4000);
+        return;
+      }
+
       // Dev mode: save directly to Strapi (no game server needed)
       console.log("Dev mode, saving directly to Strapi");
       this.onShowMessage?.("Saving to Strapi...", 1000);
@@ -134,37 +143,45 @@ export class SaveManager {
    */
   async loadSavedGame(): Promise<void> {
     // When connected to multiplayer, server sends world state via onWorldState callback
-    // For explorer mode (has world ID but no server), try to load from Strapi first
     const worldId = getWorldId();
 
-    if (worldId) {
-      // Has a world ID - try to load from Strapi (explorer mode)
-      console.log(`Explorer mode with world ID ${worldId} - loading from Strapi...`);
-      const saveData = await loadFromStrapi();
-      if (saveData && saveData.blocks.length > 0) {
-        // Clear existing blocks before loading cloud world
-        this.placementSystem.clearAll();
-
-        const count = this.placementSystem.importBlocks(saveData.blocks);
-        console.log(`Loaded ${count} blocks from Strapi`);
-
-        // Save initial copy to explorer temp storage
-        saveExplorerGame(saveData.blocks);
-
-        this.onShowMessage?.(`Explorer Mode: Loaded ${count} blocks from cloud`, 3000);
-        this.updateSaveButtonState();
-        return;
-      }
+    // No world ID - single player, load the personal local world
+    if (!worldId) {
+      this.loadLocalGame();
+      return;
     }
 
-    // No world ID or Strapi load failed - load from localStorage
-    this.loadLocalGame();
+    // Has a world ID (explorer/dev mode) - only ever show that cloud world.
+    // Never fall back to the personal local world: a later save could upload it.
+    console.log(`Explorer mode with world ID ${worldId} - loading from Strapi...`);
+    const saveData = await loadFromStrapi();
+
+    // Always clear first so nothing from another world (or the personal one) lingers
+    this.placementSystem.clearAll();
+
+    if (!saveData) {
+      this.cloudLoadFailed = true;
+      this.onShowMessage?.("Couldn't load this world from the cloud", 4000);
+      this.updateSaveButtonState();
+      return;
+    }
+
+    this.cloudLoadFailed = false;
+    const count = this.placementSystem.importBlocks(saveData.blocks);
+    console.log(`Loaded ${count} blocks from Strapi`);
+
+    // Save initial copy to explorer temp storage
+    saveExplorerGame(saveData.blocks);
+
+    this.onShowMessage?.(`Explorer Mode: Loaded ${count} blocks from cloud`, 3000);
+    this.updateSaveButtonState();
   }
 
   /**
    * Load game from localStorage only (used for single player mode)
    */
   loadLocalGame(): void {
+    this.cloudLoadFailed = false;
     if (hasSave()) {
       const saveData = loadGame();
       if (saveData && saveData.blocks.length > 0) {

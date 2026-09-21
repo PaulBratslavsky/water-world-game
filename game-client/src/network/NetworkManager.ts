@@ -234,6 +234,19 @@ export class NetworkManager {
   }
 
   /**
+   * Tell the server the player was moved directly (e.g. leaving build mode)
+   */
+  sendTeleport(position: { x: number; y: number; z: number }): void {
+    if (!this.connected || !this.playerId) return;
+
+    this.send({
+      type: "player:teleport",
+      playerId: this.playerId,
+      position,
+    });
+  }
+
+  /**
    * Send block placement to server
    */
   sendBlockPlaced(block: NetworkBlock): void {
